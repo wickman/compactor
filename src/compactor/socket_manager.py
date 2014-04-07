@@ -7,6 +7,9 @@ class SocketManager(object):
   def __init__(self, loop):
     self.loop = loop
 
+  def allocate_listener(self):
+    return 'Derp', '127.0.0.1', 12345
+
   # def accepted(self, socket:socket)
   # def link(self, process:process, to:pid)
   # def proxy(self, socket:socket)

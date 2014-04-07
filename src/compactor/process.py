@@ -1,6 +1,26 @@
+import threading
+
+from .context import Context
+from .event import (
+    DispatchEvent,
+    ExitedEvent,
+    HttpEvent,
+    MessageEvent,
+    TerminatedEvent,
+)
+
+
 class Process(object):
   ROUTE_ATTRIBUTE = '__route__'
   INSTALL_ATTRIBUTE = '__mailbox__'
+
+  class State(object):
+    BOTTOM = 0
+    READY = 1
+    RUNNING = 2
+    BLOCKED = 3
+    TERMINATING = 4
+    TERMINATED = 4
 
   @classmethod
   def route(cls, path):
@@ -17,12 +37,14 @@ class Process(object):
     return wrap
 
   def __init__(self, name, context=None):
-    self._events = []
+    self.events = []
     self._delegates = {}
     self._message_handlers = {}
     self._http_handlers = {}
     self._context = context or Context.singleton()
+    self.state = self.State.BOTTOM
     self._pid = self._context.generate_pid(name)
+    self.lock = threading.Lock()
 
   @property
   def pid(self):
@@ -37,6 +59,55 @@ class Process(object):
         self._http_handlers[getattr(attribute, self.ROUTE_ATTRIBUTE)] = attribute
       if hasattr(attribute, self.INSTALL_ATTRIBUTE):
         self._message_handlers[getattr(attribute, self.INSTALL_ATTRIBUTE)] = attribute
+
+  def enqueue(self, event):
+    with self.lock:
+      self.events.append(event)
+
+  def delegate(self, name, pid):
+    self._delegates[name] = pid
+
+  def __handle_message(self, event):
+    if event.message.name in self._message_handlers:
+      self._message_handlers[event.message.name](
+          self.event.message.from_,
+          self.event.message.body)
+    elif event.message.name in self._delegates:
+      delegated_message = Message(*self.event.message)
+      delegated_message.to = self._delegates[event.message.name]
+      self._context.transport(delegated_message)
+
+  def __handle_dispatch(self, event):
+    function = getattr(self, event.name, None)
+    if function is None:
+      raise RuntimeError('Unknown function %s on %s' % (event.name, self))
+    function(*event.args)
+
+  def __handle_http(self, event):
+    pass
+
+  def __handle_exit(self, event):
+    pass
+
+  def __handle_terminate(self, event):
+    pass
+
+  def __handle_one(self, event):
+    if isinstance(event, MessageEvent):
+      self.__handle_message(event)
+    elif isinstance(event, DispatchEvent):
+      self.__handle_dispatch(event)
+    elif isinstance(event, HttpEvent):
+      self.__handle_http(event)
+    elif isinstance(event, ExitedEvent):
+      self.__handle_exit(event)
+    elif isinstance(event, TerminatedEvent):
+      self.__handle_terminate(event)
+    else:
+      raise ValueError('Unknown event: %s' % type(event))
+
+  def serve(self, event):
+    self.__handle_one(event)
 
   def send(self, to, method, body=None):
     return self._context.send(to, method, body)

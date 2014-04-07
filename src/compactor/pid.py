@@ -26,4 +26,4 @@ class PID(object):
     return '%s@%s:%d' % (self.id, self.ip, self.port)
 
   def __repr__(self):
-    return 'PID(%s, %s, %d)' % (self.ip, self.port, self.id)
+    return 'PID(%s, %d, %s)' % (self.ip, self.port, self.id)
