@@ -1,23 +1,25 @@
+import logging
 import threading
 
 from .event import TerminatedEvent
+
+log = logging.getLogger(__name__)
 
 
 class ProcessManager(object):
   EMPTY_DELAY_SECS = 0.01  # 10ms
 
-  def __init__(self, loop, delegate=""):
-    self.delegate = delegate
-    self.loop = loop
+  def __init__(self, context):
+    self.context = context
+    self.delegate = context.delegate
     self.processes = {}
     self.runq = []
-    self.loop.call_soon(self.schedule)
+    self.context.loop.call_soon(self.schedule)
     self._run_condition = threading.Condition()
 
   def spawn(self, process):
     if process.pid in self.processes:
       raise RuntimeError('Cannot spawn already-spawned process.')
-    # TODO garbage collection
     self.processes[process.pid] = process
     self.enqueue(process)  # Enqueue process to be initialized
     return process.pid
@@ -31,9 +33,9 @@ class ProcessManager(object):
 
   def schedule(self):
     if self.schedule_one():
-      self.loop.call_soon(self.schedule)
+      self.context.loop.call_soon(self.schedule)
     else:
-      self.loop.call_later(self.EMPTY_DELAY_SECS, self.schedule)
+      self.context.loop.call_later(self.EMPTY_DELAY_SECS, self.schedule)
 
   def enqueue(self, process):
     with self._run_condition:

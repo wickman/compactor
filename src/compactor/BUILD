@@ -4,5 +4,6 @@ python_library(
   dependencies = [
     python_requirement('trollius'),  # 2.x asyncio
     python_requirement('twitter.common.lang'),
+    pants('src/compactor/platforms:tornado'),
   ]
 )

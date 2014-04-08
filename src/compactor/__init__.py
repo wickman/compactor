@@ -7,9 +7,9 @@ from .context import Context
 _ROOT_CONTEXT = None
 
 
-def initialize(delegate=""):
+def initialize(delegate="", **kw):
   global _ROOT_CONTEXT
-  _ROOT_CONTEXT = Context.singleton(delegate)
+  _ROOT_CONTEXT = Context.singleton(delegate=delegate, **kw)
 
 
 def after_init(fn):

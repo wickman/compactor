@@ -3,12 +3,20 @@
 #   gevent
 #   stdlib/threading
 
-class SocketManager(object):
-  def __init__(self, loop):
-    self.loop = loop
 
+from abc import abstractmethod
+import socket
+
+from twitter.common.lang import Interface
+
+
+class SocketManager(Interface):
+  @abstractmethod
   def allocate_listener(self):
-    return 'Derp', '127.0.0.1', 12345
+    """Allocate the listening socket for the context.
+
+    Returns a tuple of (ip, port).
+    """
 
   # def accepted(self, socket:socket)
   # def link(self, process:process, to:pid)
@@ -23,3 +31,9 @@ class SocketManager(object):
   # def close
   # def exited(node)
   # def exited(process)
+
+
+
+from .platforms.tornado import TornadoSocketManager
+DEFAULT_SOCKET_MANAGER = TornadoSocketManager
+
