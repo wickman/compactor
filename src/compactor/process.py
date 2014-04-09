@@ -13,14 +13,9 @@ from .event import (
 class Process(object):
   ROUTE_ATTRIBUTE = '__route__'
   INSTALL_ATTRIBUTE = '__mailbox__'
-
-  class State(object):
-    BOTTOM = 0
-    READY = 1
-    RUNNING = 2
-    BLOCKED = 3
-    TERMINATING = 4
-    TERMINATED = 4
+  
+  class Error(Exception): pass
+  class UnboundProcess(Error): pass
 
   @classmethod
   def route(cls, path):
@@ -36,19 +31,26 @@ class Process(object):
       return fn
     return wrap
 
-  def __init__(self, name, context=None):
-    self.events = []
+  def __init__(self, name):
+    self.name = name
     self._delegates = {}
     self._message_handlers = {}
     self._http_handlers = {}
-    self._context = context or Context.singleton()
-    self.state = self.State.BOTTOM
-    self._pid = self._context.generate_pid(name)
-    self.lock = threading.Lock()
+    self._context = None
+
+  def _assert_bound(self):
+    if not self._context:
+      raise self.UnboundProcess('Cannot get pid of unbound process.')
+
+  def bind(self, context):
+    if not isinstance(context, Context):
+      raise TypeError('Can only bind to a Context, got %s' % type(context))
+    self._context = context
 
   @property
   def pid(self):
-    return self._pid
+    self._assert_bound()
+    return PID(self.name, self._context.ip, self._context.port)
 
   def initialize(self):
     for attribute_name in dir(self):
@@ -59,10 +61,6 @@ class Process(object):
         self._http_handlers[getattr(attribute, self.ROUTE_ATTRIBUTE)] = attribute
       if hasattr(attribute, self.INSTALL_ATTRIBUTE):
         self._message_handlers[getattr(attribute, self.INSTALL_ATTRIBUTE)] = attribute
-
-  def enqueue(self, event):
-    with self.lock:
-      self.events.append(event)
 
   def delegate(self, name, pid):
     self._delegates[name] = pid
@@ -106,15 +104,30 @@ class Process(object):
     else:
       raise ValueError('Unknown event: %s' % type(event))
 
+  def exited(self, pid):
+    pass
+  
+  def lost(self, pid):
+    pass
+
   def serve(self, event):
+    self._assert_bound()
     self.__handle_one(event)
 
   def send(self, to, method, body=None):
-    return self._context.send(to, method, body)
+    self._assert_bound()
+    self._context.send(to, method, body)
+
+  def link(self, to):
+    self._assert_bound()
+    self._context.link(self.pid, to)
+
+  def terminate(self):
+    self._assert_bound()
+    self._context.terminate(self.pid)
 
 
 """
-
 
 class ProtobufProcess(Process):
   def send(self, to, message):
