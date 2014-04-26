@@ -5,3 +5,11 @@ python_binary(
     pants('src/compactor'),
   ]
 )
+
+python_binary(
+  name = 'http_client',
+  source = 'http_client.py',
+  dependencies = [
+    pants('src/compactor'),
+  ]
+)

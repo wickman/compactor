@@ -13,6 +13,8 @@ from tornado.web import asynchronous, RequestHandler, Application
 import logging
 log = logging.getLogger(__name__)
 
+from .pid import PID
+
 
 class ProcessBaseHandler(RequestHandler):
   def initialize(self, process=None):
@@ -30,9 +32,18 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
     """Trap flush for libprocess wire messages so that responses are not sent."""
     pass
 
-  def post(self):
+  def post(self, *args, **kw):
     log.info('Handling %s for %s' % (self.__name, self.process))
-    self.process.handle_message(self.__name, self.body)
+    user_agent = self.request.headers['User-Agent']
+    if not user_agent.startswith('libprocess/'):
+      return
+    try:
+      from_pid = PID.from_string(user_agent[len('libprocess/'):])
+    except ValueError:
+      log.error('Unknown process user agent: %s' % user_agent)
+      return
+    log.info('Delivering %s to %s from %s' % (self.__name, self.process, from_pid))
+    self.process.handle_message(self.__name, from_pid, self.request.body)
 
 
 class RoutedRequestHandler(ProcessBaseHandler):

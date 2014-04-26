@@ -8,6 +8,7 @@ from .httpd import HTTPD
 
 from twitter.common.lang import Compatibility
 from tornado.netutil import bind_sockets
+from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class Context(threading.Thread):
     self.loop = loop or asyncio.new_event_loop()
     self.socket, self.ip, self.port = self.make_socket()
     self.http = http_server_impl(self.socket, self.loop)
+    self.client = AsyncHTTPClient(io_loop=self.http.loop)
     super(Context, self).__init__()
     self.daemon = True
 
@@ -61,8 +63,18 @@ class Context(threading.Thread):
     method = getattr(self._processes[pid], method)
     self.loop.call_soon_threadsafe(method, *args)
 
-  def send(self, to, method, body=None):
-    pass
+  def send(self, from_pid, to_pid, method, body=None):
+    print('URL %s' % to_pid.as_url(method))
+    request = HTTPRequest(
+        url=to_pid.as_url(method),
+        method='POST',
+        user_agent='libprocess/%s' % from_pid,
+        body=body,
+    )
+    log.info('Sending POST %s' % request)
+    self.client.fetch(request, callback=lambda *a, **kw: None)
+    #import requests
+    #requests.post(to_pid.as_url(method), headers={'User-Agent': 'libprocess/%s' % from_pid})
 
   def link(self, pid, to):
     self._links[pid].add(to)

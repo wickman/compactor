@@ -100,7 +100,7 @@ class Process(object):
 
   def send(self, to, method, body=None):
     self._assert_bound()
-    self._context.send(to, method, body)
+    self._context.send(self.pid, to, method, body)
 
   def link(self, to):
     self._assert_bound()
