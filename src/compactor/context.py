@@ -20,11 +20,11 @@ class Context(threading.Thread):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('localhost', 0))
-    ip, port = sock.getsockname()
+    ip, port = s.getsockname()
     if ip == '127.0.0.1':
       ip = socket.gethostbyname(socket.gethostname())
     return s, ip, port
-  
+
   @classmethod
   def singleton(cls, delegate="", **kw):
     with cls._LOCK:
@@ -40,10 +40,11 @@ class Context(threading.Thread):
     self._links = defaultdict(set)
     self.delegate = delegate
     self.loop = loop or asyncio.new_event_loop()
-    self.ip, self.port, self.socket = cls.make_socket()
-    self.http = http_server_impl(self.socket, self._handle_request, self.loop)
+    self.socket, self.ip, self.port = self.make_socket()
+    self.http = http_server_impl(self.socket, self.loop)
     super(Context, self).__init__()
     self.daemon = True
+    self.started = False
 
   def run(self):
     self.loop.run_forever()
@@ -54,7 +55,9 @@ class Context(threading.Thread):
 
   def spawn(self, process):
     process.bind(self)
-    self._processes[pid] = process
+    process.initialize()
+    self.http.mount_process(process)
+    self._processes[process.pid] = process
     return process.pid
 
   def send(self, to, method, body=None):
@@ -62,9 +65,11 @@ class Context(threading.Thread):
 
   def link(self, pid, to):
     self._links[pid].add(to)
-  
+
   def terminate(self, pid):
-    self._processes.pop(pid, None)
+    process = self._processes.pop(pid, None)
+    if process:
+      self.http.unmount_process(process)
     for link in self._links.pop(pid, []):
       # TODO(wickman) Not sure why libprocess doesn't send termination events
       pass
@@ -73,3 +78,6 @@ class Context(threading.Thread):
     # TODO(wickman) We should roll our own request object so that we're not
     # tied to tornado.httpserver.HTTPRequest.
     pass
+
+  def __str__(self):
+    return 'Context(%s:%s)' % (self.ip, self.port)

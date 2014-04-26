@@ -1,29 +1,27 @@
 import threading
 
 from .context import Context
-from .event import (
-    DispatchEvent,
-    ExitedEvent,
-    HttpEvent,
-    MessageEvent,
-    TerminatedEvent,
-)
+from .pid import PID
 
 
 class Process(object):
   ROUTE_ATTRIBUTE = '__route__'
   INSTALL_ATTRIBUTE = '__mailbox__'
-  
+
   class Error(Exception): pass
   class UnboundProcess(Error): pass
 
   @classmethod
   def route(cls, path):
+    if not path.startswith('/'):
+      raise ValueError('Routes must start with "/"')
     def wrap(fn):
       setattr(fn, cls.ROUTE_ATTRIBUTE, path)
       return fn
     return wrap
 
+  # We'll probably need to make route and install opaque, and just have them delegate to
+  # some argument container that can then be introspected by the process implementations.
   @classmethod
   def install(cls, mbox):
     def wrap(fn):
@@ -34,9 +32,13 @@ class Process(object):
   def __init__(self, name):
     self.name = name
     self._delegates = {}
-    self._message_handlers = {}
     self._http_handlers = {}
+    self._message_handlers = {}
     self._context = None
+
+  def initialize(self):
+    self._http_handlers.update(self.iter_routes())
+    self._message_handlers.update(self.iter_handlers())
 
   def _assert_bound(self):
     if not self._context:
@@ -50,69 +52,51 @@ class Process(object):
   @property
   def pid(self):
     self._assert_bound()
-    return PID(self.name, self._context.ip, self._context.port)
+    return PID(self._context.ip, self._context.port, self.name)
 
-  def initialize(self):
+  @property
+  def route_paths(self):
+    return self._http_handlers.keys()
+
+  @property
+  def message_names(self):
+    return self._message_handlers.keys()
+
+  def iter_callables(self):
     for attribute_name in dir(self):
       attribute = getattr(self, attribute_name)
       if not callable(attribute):
         continue
-      if hasattr(attribute, self.ROUTE_ATTRIBUTE):
-        self._http_handlers[getattr(attribute, self.ROUTE_ATTRIBUTE)] = attribute
-      if hasattr(attribute, self.INSTALL_ATTRIBUTE):
-        self._message_handlers[getattr(attribute, self.INSTALL_ATTRIBUTE)] = attribute
+      yield attribute
+
+  def iter_routes(self):
+    for function in self.iter_callables():
+      if hasattr(function, self.ROUTE_ATTRIBUTE):
+        yield getattr(function, self.ROUTE_ATTRIBUTE), function
+
+  def iter_handlers(self):
+    for function in self.iter_callables():
+      if hasattr(function, self.INSTALL_ATTRIBUTE):
+        yield getattr(function, self.INSTALL_ATTRIBUTE), function
 
   def delegate(self, name, pid):
     self._delegates[name] = pid
 
-  def __handle_message(self, event):
-    if event.message.name in self._message_handlers:
-      self._message_handlers[event.message.name](
-          self.event.message.from_,
-          self.event.message.body)
-    elif event.message.name in self._delegates:
-      delegated_message = Message(*self.event.message)
-      delegated_message.to = self._delegates[event.message.name]
-      self._context.transport(delegated_message)
+  def handle_message(self, name, from_pid, body):
+    if name in self._message_handlers:
+      self._message_handlers[name](from_pid, body)
+    elif name in self._delegates:
+      to = self._delegates[name]
+      self._context.transport(to, name, body, from_pid)
 
-  def __handle_dispatch(self, event):
-    function = getattr(self, event.name, None)
-    if function is None:
-      raise RuntimeError('Unknown function %s on %s' % (event.name, self))
-    function(*event.args)
-
-  def __handle_http(self, event):
-    pass
-
-  def __handle_exit(self, event):
-    pass
-
-  def __handle_terminate(self, event):
-    pass
-
-  def __handle_one(self, event):
-    if isinstance(event, MessageEvent):
-      self.__handle_message(event)
-    elif isinstance(event, DispatchEvent):
-      self.__handle_dispatch(event)
-    elif isinstance(event, HttpEvent):
-      self.__handle_http(event)
-    elif isinstance(event, ExitedEvent):
-      self.__handle_exit(event)
-    elif isinstance(event, TerminatedEvent):
-      self.__handle_terminate(event)
-    else:
-      raise ValueError('Unknown event: %s' % type(event))
+  def handle_http(self, route, handler, *args, **kw):
+    return self._http_handlers[routes](handler, *args, **kw)
 
   def exited(self, pid):
     pass
-  
+
   def lost(self, pid):
     pass
-
-  def serve(self, event):
-    self._assert_bound()
-    self.__handle_one(event)
 
   def send(self, to, method, body=None):
     self._assert_bound()
@@ -127,15 +111,28 @@ class Process(object):
     self._context.terminate(self.pid)
 
 
-"""
-
 class ProtobufProcess(Process):
-  def send(self, to, message):
-    message_name = message.__class__.__name__
-    body = message.SerializeToString()
-    return super(ProtobufProcess, self).send(to, message_name, body)
+  @classmethod
+  def install(cls, message_type, endpoint=None):
+    endpoint = endpoint or message_type.__class__.__name__
+    def wrap(fn):
+      setattr(fn, cls.MESSAGE_TYPE_ATTRIBUTE, message_type)
+      return Process.install(endpoint)(fn)
+    return wrap
+
+  def send(self, to, message, method_name=None):
+    super(ProtobufProcess, self).send(
+        to, method_name or message.__class__.__name__, message.SerializeToString())
+
+  def handle_message(self, name, from_pid, body):
+    handler = self._message_handlers[name]
+    message_type = getattr(handler, self.MESSAGE_TYPE_ATTRIBUTE)
+    message = message_type()
+    message.MergeFromString(body)
+    super(ProtobufProcess, self).handle_message(name, from_pid, body)
 
 
+"""
 class QueueProcess(Process):
   def __init__(self, **kw):
     ...
@@ -150,43 +147,46 @@ class QueueProcess(Process):
     pass
 
 
-class CompactorFuture(asyncio.Future):
-  def on_any()
-  def then(self, function, *args, **kw):
-    # create a new future that gets linked
-    # so you can do
-    # compactor.dispatch(queue.dequeue).then(
-    #     compactor.dispatch, queue.enqueue)
+class ExecutorProcess(ProtobufProcess):
+  def __init__(self, slave_pid, driver, executor):
+    self.slave_pid = slave_pid
+    self.driver = driver
+    self.executor = executor
+    super(SlaveProcess, self).__init__('slave')
+
+  def initialize(self):
+    regiser_executor_message = RegisterExecutorMessage(framework_id, executor_id)
+    self.send(
+        self.slave_pid,
+        register_executor_message,
+        method_name='mesos.internal.RegisterExecutorMessage')
+
+  @install(ExecutorRegisteredMessage, endpoint='mesos.internal.ExecutorRegisteredMessage')
+  def registered(self, message):
+    executor_info, framework_id, framework_info, slave_id, slave_info = (
+        message.executor_info, message.framework_id, message.framework_info, message.slave_id,
+        message.slave_info)
+    # stuff
+
+  @route('/vars.json')
+  def vars(self, handler):
+    handler.write(json.dumps(self._vars))
+
+  @route('/expensive')
+  @asynchronous
+  def vars(self, handler):
+    result1 = yield self.some_expensive_op1()
+    result2 = yield self.some_expensive_op2(result1)
+    handler.write(result2.serialize())
+
+  @route('/redirect_me')
+  def redirector(self, handler):
+    handler.redirect('some_other_url')
 
 
-import compactor
-from compactor.process import Process
 
-compactor.initialize('executor')
-queue = compactor.spawn(QueueProcess)
-compactor.dispatch(queue.enqueue, 42)
-compactor.dispatch(queue.dequeue).then(print)
-compactor.send(master_pid, 'enqueue', 'pooping')
-compactor.send(master_pid, 'ping')
-
-
-# Implement first:
-#   dispatch
-#   spawn
-
-# then:
-#   install
-#   local send
-
-# Then:
-#   route
-#   remote send
-
-
-class ProtobufProcess
-
-class ThriftProcess
-
-class JSONProcess
+slave = PID.from_string(sys.argv[1])
+executor_process = ExecutorProcess(slave, driver, executor)
+context.spawn(executor_process)
 
 """

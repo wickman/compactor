@@ -11,6 +11,13 @@ _ROOT_CONTEXT = None
 def initialize(delegate="", **kw):
   global _ROOT_CONTEXT
   _ROOT_CONTEXT = Context.singleton(delegate=delegate, **kw)
+  print(_ROOT_CONTEXT)
+  if not _ROOT_CONTEXT.is_alive():
+    _ROOT_CONTEXT.start()
+
+
+def join():
+  _ROOT_CONTEXT.join()
 
 
 def after_init(fn):
@@ -22,7 +29,7 @@ def after_init(fn):
 
 
 @after_init
-def spawn(process_cls, *args, **kw):
+def spawn(process):
   """Spawn a process and return its pid."""
   return _ROOT_CONTEXT.spawn(process)
 
