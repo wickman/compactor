@@ -90,7 +90,7 @@ class Process(object):
       self._context.transport(to, name, body, from_pid)
 
   def handle_http(self, route, handler, *args, **kw):
-    return self._http_handlers[routes](handler, *args, **kw)
+    return self._http_handlers[route](handler, *args, **kw)
 
   def exited(self, pid):
     pass

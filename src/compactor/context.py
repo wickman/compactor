@@ -7,6 +7,7 @@ import threading
 from .httpd import HTTPD
 
 from twitter.common.lang import Compatibility
+from tornado.netutil import bind_sockets
 
 log = logging.getLogger(__name__)
 
@@ -17,12 +18,9 @@ class Context(threading.Thread):
 
   @classmethod
   def make_socket(cls):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('localhost', 0))
+    ip = socket.gethostbyname(socket.gethostname())
+    s = bind_sockets(0, address=ip)[0]
     ip, port = s.getsockname()
-    if ip == '127.0.0.1':
-      ip = socket.gethostbyname(socket.gethostname())
     return s, ip, port
 
   @classmethod
@@ -44,7 +42,6 @@ class Context(threading.Thread):
     self.http = http_server_impl(self.socket, self.loop)
     super(Context, self).__init__()
     self.daemon = True
-    self.started = False
 
   def run(self):
     self.loop.run_forever()
@@ -60,6 +57,10 @@ class Context(threading.Thread):
     self._processes[process.pid] = process
     return process.pid
 
+  def dispatch(self, pid, method, *args):
+    method = getattr(self._processes[pid], method)
+    self.loop.call_soon_threadsafe(method, *args)
+
   def send(self, to, method, body=None):
     pass
 
@@ -73,11 +74,6 @@ class Context(threading.Thread):
     for link in self._links.pop(pid, []):
       # TODO(wickman) Not sure why libprocess doesn't send termination events
       pass
-
-  def _handle_request(self, request):
-    # TODO(wickman) We should roll our own request object so that we're not
-    # tied to tornado.httpserver.HTTPRequest.
-    pass
 
   def __str__(self):
     return 'Context(%s:%s)' % (self.ip, self.port)

@@ -3,30 +3,15 @@ from __future__ import absolute_import
 import socket
 import types
 
-from tornado.httpserver import HTTPServer
+from tornado import gen
+from tornado.httpserver import HTTPConnection, HTTPServer
 from tornado.ioloop import IOLoop
 from tornado.platform.asyncio import BaseAsyncIOLoop
-
 from tornado.tcpserver import TCPServer
-from tornado.httpserver import HTTPConnection
 from tornado.web import asynchronous, RequestHandler, Application
 
-
-"""
-  for route_name, function in process.iter_routes():
-    server.add_handlers('.*$', [
-        ('/%s/%s' % (process.pid.id, route_name),
-         RoutedRequestHandler,
-         dict(handler=function)),
-    ])
-
-  for message_name, function in process.iter_handlers():
-    server.add_handlers('.*$', [
-        ('/%s/%s' % (process.pid.id, message_name),
-         WireProtocolMessageHandler,
-         dict(handler=function)),
-    ])
-"""
+import logging
+log = logging.getLogger(__name__)
 
 
 class ProcessBaseHandler(RequestHandler):
@@ -35,6 +20,8 @@ class ProcessBaseHandler(RequestHandler):
 
 
 class WireProtocolMessageHandler(ProcessBaseHandler):
+  """Tornado request handler for libprocess internal messages."""
+
   def initialize(self, **kw):
     self.__name = kw.pop('name')
     super(WireProtocolMessageHandler, self).initialize(**kw)
@@ -44,21 +31,25 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
     pass
 
   def post(self):
+    log.info('Handling %s for %s' % (self.__name, self.process))
     self.process.handle_message(self.__name, self.body)
 
 
 class RoutedRequestHandler(ProcessBaseHandler):
-  """Routed http request handler."""
+  """Tornado request handler for routed http requests."""
+
   def initialize(self, **kw):
     self.__path = kw.pop('path')
-    super(WireProtocolMessageHandler, self).initialize(**kw)
+    super(RoutedRequestHandler, self).initialize(**kw)
 
   @asynchronous
+  @gen.engine
   def get(self, *args, **kw):
-    print('Handling %s for %s' % (self.__path, self.process))
+    log.info('Handling %s for %s' % (self.__path, self.process))
     handle = self.process.handle_http(self.__path, self, *args, **kw)
     if isinstance(handle, types.GeneratorType):
-      yield handle
+      for stuff in handle:
+        yield stuff
     if not self._finished:
       self.finish()
 
@@ -77,7 +68,7 @@ class HTTPD(object):
   def mount_process(self, process):
     for route_path in process.route_paths:
       route = '/%s%s' % (process.pid.id, route_path)
-      print('Mounting route %s' % route)
+      log.info('Mounting route %s' % route)
       self.app.add_handlers('.*$', [
           (route,
            RoutedRequestHandler,
@@ -85,8 +76,10 @@ class HTTPD(object):
       ])
 
     for message_name in process.message_names:
+      route = '/%s/%s' % (process.pid.id, message_name)
+      log.info('Mounting message handler %s' % route)
       self.app.add_handlers('.*$', [
-          ('/%s/%s' % (process.pid.id, message_name),
+          (route,
            WireProtocolMessageHandler,
            dict(process=process, name=message_name)),
       ])
