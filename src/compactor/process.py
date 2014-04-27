@@ -116,7 +116,7 @@ class ProtobufProcess(Process):
 
   @classmethod
   def install(cls, message_type, endpoint=None):
-    endpoint = endpoint or message_type.__class__.__name__
+    endpoint = endpoint or message_type.DESCRIPTOR.full_name
     def wrap(fn):
       setattr(fn, cls.MESSAGE_TYPE_ATTRIBUTE, message_type)
       return Process.install(endpoint)(fn)
@@ -124,7 +124,7 @@ class ProtobufProcess(Process):
 
   def send(self, to, message, method_name=None):
     super(ProtobufProcess, self).send(
-        to, method_name or message.__class__.__name__, message.SerializeToString())
+        to, method_name or message.DESCRIPTOR.full_name, message.SerializeToString())
 
   def handle_message(self, name, from_pid, body):
     handler = self._message_handlers[name]
