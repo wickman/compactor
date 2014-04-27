@@ -112,6 +112,8 @@ class Process(object):
 
 
 class ProtobufProcess(Process):
+  MESSAGE_TYPE_ATTRIBUTE = '__pb_msgtype__'
+
   @classmethod
   def install(cls, message_type, endpoint=None):
     endpoint = endpoint or message_type.__class__.__name__
@@ -129,7 +131,7 @@ class ProtobufProcess(Process):
     message_type = getattr(handler, self.MESSAGE_TYPE_ATTRIBUTE)
     message = message_type()
     message.MergeFromString(body)
-    super(ProtobufProcess, self).handle_message(name, from_pid, body)
+    super(ProtobufProcess, self).handle_message(name, from_pid, message)
 
 
 """

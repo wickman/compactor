@@ -23,5 +23,8 @@ setup(
   package_dir={'': 'src'},
   packages=['compactor'],
   install_requires=install_requires,
+  extras_require={
+    'pb': ['protobuf'],
+  },
   zip_safe=True,
 )
