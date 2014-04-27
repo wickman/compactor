@@ -3,7 +3,7 @@
 set -o errexit
 set -o nounset
 
-PANTS_VERSION=0.0.13
+PANTS_VERSION=0.0.21
 if ! [[ -e build-support/pants-$PANTS_VERSION.pex ]]; then
   echo "Building pants.pex @ $PANTS_VERSION"
   ./build-support/pex \
