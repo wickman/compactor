@@ -16,6 +16,15 @@ class PID(object):
     self.port = port
     self.id = id_
 
+  def __hash__(self):
+    return hash((self.ip, self.port, self.id))
+
+  def __eq__(self, other):
+    return isinstance(other, PID) and (
+        self.ip == other.ip and
+        self.port == other.port and
+        self.id == other.id)
+
   def as_url(self, endpoint=None):
     url = 'http://%s:%s/%s' % (self.ip, self.port, self.id)
     if endpoint:

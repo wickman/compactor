@@ -1,13 +1,14 @@
 import asyncio
+from collections import defaultdict
 import logging
+import socket
 import threading
 
-from .event import DispatchEvent
-from .pid import PID
-from .process_manager import ProcessManager
-from .socket_manager import DEFAULT_SOCKET_MANAGER
+from .httpd import HTTPD
 
 from twitter.common.lang import Compatibility
+from tornado.netutil import bind_sockets
+from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,17 @@ log = logging.getLogger(__name__)
 class Context(threading.Thread):
   _SINGLETON = None
   _LOCK = threading.Lock()
+
+  class Error(Exception): pass
+  class InvalidProcess(Error): pass
+  class InvalidMethod(Error): pass
+
+  @classmethod
+  def make_socket(cls):
+    ip = socket.gethostbyname(socket.gethostname())
+    s = bind_sockets(0, address=ip)[0]
+    ip, port = s.getsockname()
+    return s, ip, port
 
   @classmethod
   def singleton(cls, delegate="", **kw):
@@ -26,60 +38,69 @@ class Context(threading.Thread):
         cls._SINGLETON = cls(delegate=delegate, **kw)
     return cls._SINGLETON
 
-  def __init__(self,
-               delegate="",
-               socket_manager_impl=DEFAULT_SOCKET_MANAGER,
-               process_manager_impl=ProcessManager,
-               loop=None):
+  def __init__(self, delegate="", loop=None):
+    self._processes = {}
+    self._links = defaultdict(set)
     self.delegate = delegate
     self.loop = loop or asyncio.new_event_loop()
-    self.socket_manager = socket_manager_impl(self)
-    self.process_manager = process_manager_impl(self)
-    self.ip, self.port = None, None
-    self._initialized = threading.Event()
+    self.socket, self.ip, self.port = self.make_socket()
+    self.http = HTTPD(self.socket, self.loop)
+    self.client = AsyncHTTPClient(io_loop=self.http.loop)
     super(Context, self).__init__()
     self.daemon = True
 
-  def _initialize_listener(self):
-    self.ip, self.port = self.socket_manager.allocate_listener()
-    self._initialized.set()
-
   def run(self):
-    self.loop.call_soon(self._initialize_listener)
     self.loop.run_forever()
-
-  def wait_started(self):
-    self._initialized.wait()
 
   def stop(self):
     self.loop.stop()
     self.loop.close()
 
-  def generate_pid(self, id=""):
-    if not self._initialized.is_set():
-      raise RuntimeError('generate_pid may not be called until the event loop has started.')
-    return PID(self.ip, self.port, id)
+  def spawn(self, process):
+    process.bind(self)
+    process.initialize()
+    self.http.mount_process(process)
+    self._processes[process.pid] = process
+    return process.pid
 
-  def transport(self, message):
-    raise NotImplementedError
+  def dispatch(self, pid, method, *args):
+    try:
+      function = getattr(self._processes[pid], method)
+    except KeyError:
+      raise self.InvalidProcess('Unknown process %s' % pid)
+    except AttributeError:
+      raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
+    self.loop.call_soon_threadsafe(function, *args)
 
-  def spawn(self, *args, **kw):
-    return self.process_manager.spawn(*args, **kw)
+  def send(self, from_pid, to_pid, method, body=None):
+    body = body or b''
+    request = HTTPRequest(
+        url=to_pid.as_url(method),
+        method='POST',
+        user_agent='libprocess/%s' % from_pid,
+        body=body,
+    )
 
-  def dispatch(self, pid_or_process, function_or_name, *args):
-    if isinstance(pid_or_process, PID):
-      pid = pid_or_process
-    elif isinstance(pid_or_process, Process):
-      pid = pid_or_process.pid
-    else:
-      raise TypeError('dispatch expects a PID or Process, got %s' % type(pid_or_process))
+    def callback(response):
+      # we are not guaranteed to get an acknowledgement, but log if we do
+      log.info('Received acknowledgement for %s => %s/%s: %s' % (
+          from_pid, to_pid, method, response))
 
-    if isinstance(function_or_name, Compatibility.string):
-      name = function_or_name
-    elif callable(function_or_name):
-      name = function_or_name.__name__
-    else:
-      raise TypeError('dispatch expects a function or nae, got %s' % type(function_or_name))
+    log.info('Sending POST %s' % request)
+    self.client.fetch(request, callback=callback)
 
-    log.debug('Delivering %s to %s' % (name, pid))
-    self.process_manager.deliver(pid, DispatchEvent(name, args))
+  def link(self, pid, to):
+    self._links[pid].add(to)
+
+  def terminate(self, pid):
+    log.info('Terminating %s' % pid)
+    process = self._processes.pop(pid, None)
+    if process:
+      log.info('Unmounting %s' % process)
+      self.http.unmount_process(process)
+    for link in self._links.pop(pid, []):
+      # TODO(wickman) Not sure why libprocess doesn't send termination events
+      pass
+
+  def __str__(self):
+    return 'Context(%s:%s)' % (self.ip, self.port)

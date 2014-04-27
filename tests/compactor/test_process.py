@@ -22,9 +22,8 @@ def test_simple_process():
 
   context = Context()
   context.start()
-  context.wait_started()
 
-  derp = DerpProcess(context=context)
+  derp = DerpProcess()
   pid = context.spawn(derp)
   context.dispatch(pid, 'ping', 42)
 
