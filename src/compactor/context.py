@@ -6,7 +6,6 @@ import threading
 
 from .httpd import HTTPD
 
-from twitter.common.lang import Compatibility
 from tornado.netutil import bind_sockets
 from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 

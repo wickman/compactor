@@ -1,5 +1,3 @@
-import threading
-
 from .context import Context
 from .pid import PID
 

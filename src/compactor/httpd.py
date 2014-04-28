@@ -2,17 +2,14 @@ from __future__ import absolute_import
 
 import logging
 import re
-import socket
 import types
 
 from .pid import PID
 
 from tornado import gen
-from tornado.httpserver import HTTPConnection, HTTPServer
-from tornado.ioloop import IOLoop
+from tornado.httpserver import HTTPServer
 from tornado.platform.asyncio import BaseAsyncIOLoop
-from tornado.tcpserver import TCPServer
-from tornado.web import asynchronous, RequestHandler, Application, HTTPError
+from tornado.web import RequestHandler, Application, HTTPError
 
 log = logging.getLogger(__name__)
 
