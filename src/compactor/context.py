@@ -63,14 +63,21 @@ class Context(threading.Thread):
     self._processes[process.pid] = process
     return process.pid
 
-  def dispatch(self, pid, method, *args):
+  def _get_function(self, pid, method):
     try:
-      function = getattr(self._processes[pid], method)
+      return getattr(self._processes[pid], method)
     except KeyError:
       raise self.InvalidProcess('Unknown process %s' % pid)
     except AttributeError:
       raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
+
+  def dispatch(self, pid, method, *args):
+    function = self._get_function(pid, method)
     self.loop.call_soon_threadsafe(function, *args)
+
+  def delay(self, amount, pid, method, *args):
+    function = self._get_function(pid, method)
+    self.loop.call_later(amount, function, *args)
 
   def send(self, from_pid, to_pid, method, body=None):
     body = body or b''
@@ -86,7 +93,9 @@ class Context(threading.Thread):
       log.info('Received acknowledgement for %s => %s/%s: %s' % (
           from_pid, to_pid, method, response))
 
-    log.info('Sending POST %s' % request)
+    log.info('Sending POST %s => %s (payload: %d bytes)' % (
+        from_pid, to_pid.as_url(method), len(body)))
+
     self.client.fetch(request, callback=callback)
 
   def link(self, pid, to):

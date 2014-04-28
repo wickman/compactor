@@ -1,7 +1,11 @@
 from __future__ import absolute_import
 
+import logging
+import re
 import socket
 import types
+
+from .pid import PID
 
 from tornado import gen
 from tornado.httpserver import HTTPConnection, HTTPServer
@@ -10,10 +14,7 @@ from tornado.platform.asyncio import BaseAsyncIOLoop
 from tornado.tcpserver import TCPServer
 from tornado.web import asynchronous, RequestHandler, Application, HTTPError
 
-import logging
 log = logging.getLogger(__name__)
-
-from .pid import PID
 
 
 class ProcessBaseHandler(RequestHandler):
@@ -84,7 +85,7 @@ class HTTPD(object):
       route = '/%s%s' % (process.pid.id, route_path)
       log.info('Mounting route %s' % route)
       self.app.add_handlers('.*$', [
-          (route,
+          (re.escape(route),
            RoutedRequestHandler,
            dict(process=process, path=route_path)),
       ])
@@ -93,7 +94,7 @@ class HTTPD(object):
       route = '/%s/%s' % (process.pid.id, message_name)
       log.info('Mounting message handler %s' % route)
       self.app.add_handlers('.*$', [
-          (route,
+          (re.escape(route),
            WireProtocolMessageHandler,
            dict(process=process, name=message_name)),
       ])

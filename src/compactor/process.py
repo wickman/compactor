@@ -55,6 +55,11 @@ class Process(object):
     return PID(self._context.ip, self._context.port, self.name)
 
   @property
+  def context(self):
+    self._assert_bound()
+    return self._context
+
+  @property
   def route_paths(self):
     return self._http_handlers.keys()
 
@@ -132,63 +137,3 @@ class ProtobufProcess(Process):
     message = message_type()
     message.MergeFromString(body)
     super(ProtobufProcess, self).handle_message(name, from_pid, message)
-
-
-"""
-class QueueProcess(Process):
-  def __init__(self, **kw):
-    ...
-    super(QueueProcess, self).__init__('queue', **kw)
-
-  @install('enqueue')
-  def enqueue(self, body):
-    pass
-
-  @install('dequeue')
-  def dequeue(self):
-    pass
-
-
-class ExecutorProcess(ProtobufProcess):
-  def __init__(self, slave_pid, driver, executor):
-    self.slave_pid = slave_pid
-    self.driver = driver
-    self.executor = executor
-    super(SlaveProcess, self).__init__('slave')
-
-  def initialize(self):
-    regiser_executor_message = RegisterExecutorMessage(framework_id, executor_id)
-    self.send(
-        self.slave_pid,
-        register_executor_message,
-        method_name='mesos.internal.RegisterExecutorMessage')
-
-  @install(ExecutorRegisteredMessage, endpoint='mesos.internal.ExecutorRegisteredMessage')
-  def registered(self, message):
-    executor_info, framework_id, framework_info, slave_id, slave_info = (
-        message.executor_info, message.framework_id, message.framework_info, message.slave_id,
-        message.slave_info)
-    # stuff
-
-  @route('/vars.json')
-  def vars(self, handler):
-    handler.write(json.dumps(self._vars))
-
-  @route('/expensive')
-  @asynchronous
-  def vars(self, handler):
-    result1 = yield self.some_expensive_op1()
-    result2 = yield self.some_expensive_op2(result1)
-    handler.write(result2.serialize())
-
-  @route('/redirect_me')
-  def redirector(self, handler):
-    handler.redirect('some_other_url')
-
-
-
-slave = PID.from_string(sys.argv[1])
-executor_process = ExecutorProcess(slave, driver, executor)
-context.spawn(executor_process)
-
-"""

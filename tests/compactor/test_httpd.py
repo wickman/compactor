@@ -123,7 +123,7 @@ def test_simple_message():
   pid2 = context.spawn(proc2)
 
   proc1.send(pid2, 'ping')
-  proc1.pong_event.wait(timeout=60)
+  proc1.pong_event.wait(timeout=1)
   assert proc1.pong_event.is_set()
   assert proc2.ping_event.is_set()
 
