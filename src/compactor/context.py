@@ -47,6 +47,13 @@ class Context(threading.Thread):
     self.client = AsyncHTTPClient(io_loop=self.http.loop)
     super(Context, self).__init__()
     self.daemon = True
+    self.lock = threading.Lock()
+    self.__id = 1
+
+  def unique_suffix(self):
+    with self.lock:
+      suffix, self.__id = '(%d)' % self.__id, self.__id + 1
+      return suffix
 
   def run(self):
     self.loop.run_forever()
