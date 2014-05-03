@@ -72,7 +72,7 @@ class ScatterThread(threading.Thread):
   def run(self):
     scatter = ScatterProcess('scatter' + self.context.unique_suffix())
     self.context.spawn(scatter)
-    
+
     expected_acks = set('syn%d' % k for k in range(self.iterations))
 
     for k in range(self.iterations):
