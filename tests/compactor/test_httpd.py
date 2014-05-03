@@ -4,9 +4,10 @@ import threading
 import compactor
 from compactor.context import Context
 from compactor.process import Process
-from compactor.testing import EphemeralContextTestCase
+from compactor.testing import ephemeral_context, EphemeralContextTestCase
 
 import requests
+import pytest
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
@@ -86,37 +87,47 @@ class ScatterThread(threading.Thread):
     self.success = True
 
 
-class TestScatterGather(EphemeralContextTestCase):
-  def startjoin(self, scatters):
+def startjoin(context, scatters):
+  gather = GatherProcess()
+  context.spawn(gather)
+
+  for scatter in scatters:
+    scatter.start()
+
+  for scatter in scatters:
+    scatter.join()
+
+  for scatter in scatters:
+    assert scatter.success
+
+
+@pytest.mark.parametrize('gather_ack,scatter_ack', [
+    (False, False),
+    (False, True),
+    (True, False),
+    (True, True),
+])
+def test_multi_thread_multi_scatter(gather_ack, scatter_ack):
+  with ephemeral_context(acks=gather_ack) as context:
     gather = GatherProcess()
-    self.context.spawn(gather)
-
-    for scatter in scatters:
-      scatter.start()
-
-    for scatter in scatters:
-      scatter.join()
-
-    for scatter in scatters:
-      assert scatter.success
-
-  def test_multi_thread_multi_scatter(self):
-    gather = GatherProcess()
-    self.context.spawn(gather)
-    scatters = [ScatterThread(gather.pid, 3, Context()) for k in range(5)]
+    context.spawn(gather)
+    scatters = [ScatterThread(gather.pid, 3, Context(acks=scatter_ack)) for k in range(5)]
     for scatter in scatters:
       scatter.context.start()
     try:
-      self.startjoin(scatters)
+      startjoin(context, scatters)
     finally:
       for scatter in scatters:
         scatter.context.stop()
 
-  def test_single_thread_multi_scatter(self):
+
+@pytest.mark.parametrize('acks', (False, True))
+def test_single_thread_multi_scatter(acks):
+  with ephemeral_context(acks=acks) as context:
     gather = GatherProcess()
-    self.context.spawn(gather)
-    scatters = [ScatterThread(gather.pid, 3, self.context) for k in range(5)]
-    self.startjoin(scatters)
+    context.spawn(gather)
+    scatters = [ScatterThread(gather.pid, 3, context) for k in range(5)]
+    startjoin(context, scatters)
 
 
 class TestHttpd(EphemeralContextTestCase):

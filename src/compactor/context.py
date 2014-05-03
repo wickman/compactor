@@ -37,13 +37,13 @@ class Context(threading.Thread):
         cls._SINGLETON = cls(delegate=delegate, **kw)
     return cls._SINGLETON
 
-  def __init__(self, delegate="", loop=None):
+  def __init__(self, delegate="", loop=None, acks=False):
     self._processes = {}
     self._links = defaultdict(set)
     self.delegate = delegate
     self.loop = loop or asyncio.new_event_loop()
     self.socket, self.ip, self.port = self.make_socket()
-    self.http = HTTPD(self.socket, self.loop)
+    self.http = HTTPD(self.socket, self.loop, acks=acks)
     self.client = AsyncHTTPClient(io_loop=self.http.loop)
     super(Context, self).__init__()
     self.daemon = True

@@ -24,21 +24,31 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
 
   def initialize(self, **kw):
     self.__name = kw.pop('name')
+    self.__acks = kw.pop('acks', False)
     super(WireProtocolMessageHandler, self).initialize(**kw)
 
   def flush(self, *args, **kw):
     """Trap flush for libprocess wire messages so that responses are not sent."""
-    pass
+    ok = self.get_status() == 200
+
+    if self.__acks:
+      self.set_status(202 if ok else 404)
+      super(WireProtocolMessageHandler, self).flush(*args, **kw)
+    else:
+      # Do not flush -- just clear and return
+      self.clear()
 
   def post(self, *args, **kw):
     log.info('Handling %s for %s' % (self.__name, self.process))
     user_agent = self.request.headers['User-Agent']
     if not user_agent.startswith('libprocess/'):
+      self.set_status(404)
       return
     try:
       from_pid = PID.from_string(user_agent[len('libprocess/'):])
     except ValueError:
       log.error('Unknown process user agent: %s' % user_agent)
+      self.set_status(404)
       return
     log.info('Delivering %s to %s from %s' % (self.__name, self.process, from_pid))
     self.process.handle_message(self.__name, from_pid, self.request.body)
@@ -67,7 +77,12 @@ class Blackhole(RequestHandler):
 
 
 class HTTPD(object):
-  def __init__(self, sock, loop):
+  def __init__(self, sock, loop, acks=False):
+    """Construct an HTTP server on a socket given an ioloop.
+
+    If acks is True, send HTTP 202 acknowledgements in response
+    to libprocess messages.
+    """
     class CustomIOLoop(BaseAsyncIOLoop):
       def initialize(self):
         super(CustomIOLoop, self).initialize(loop, close_loop=False)
@@ -75,6 +90,7 @@ class HTTPD(object):
     self.app = Application(handlers=[(r'/.*$', Blackhole)])
     self.server = HTTPServer(self.app, io_loop=self.loop)
     self.server.add_sockets([sock])
+    self._with_acks = acks
     sock.listen(1024)
 
   def mount_process(self, process):
@@ -93,7 +109,7 @@ class HTTPD(object):
       self.app.add_handlers('.*$', [
           (re.escape(route),
            WireProtocolMessageHandler,
-           dict(process=process, name=message_name)),
+           dict(process=process, name=message_name, acks=self._with_acks)),
       ])
 
   def unmount_process(self, process):
