@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 
 import compactor
 from compactor.context import Context
@@ -101,17 +102,11 @@ def startjoin(context, scatters):
     assert scatter.success
 
 
-@pytest.mark.parametrize('gather_ack,scatter_ack', [
-    (False, False),
-    (False, True),
-    (True, False),
-    (True, True),
-])
-def test_multi_thread_multi_scatter(gather_ack, scatter_ack):
-  with ephemeral_context(acks=gather_ack) as context:
+def test_multi_thread_multi_scatter():
+  with ephemeral_context() as context:
     gather = GatherProcess()
     context.spawn(gather)
-    scatters = [ScatterThread(gather.pid, 3, Context(acks=scatter_ack)) for k in range(5)]
+    scatters = [ScatterThread(gather.pid, 3, Context()) for k in range(5)]
     for scatter in scatters:
       scatter.context.start()
     try:
@@ -121,13 +116,43 @@ def test_multi_thread_multi_scatter(gather_ack, scatter_ack):
         scatter.context.stop()
 
 
-@pytest.mark.parametrize('acks', (False, True))
-def test_single_thread_multi_scatter(acks):
-  with ephemeral_context(acks=acks) as context:
+def test_single_thread_multi_scatter():
+  with ephemeral_context() as context:
     gather = GatherProcess()
     context.spawn(gather)
     scatters = [ScatterThread(gather.pid, 3, context) for k in range(5)]
     startjoin(context, scatters)
+
+
+class ChildProcess(Process):
+  def __init__(self):
+    self.exit_event = threading.Event()
+    self.link_event = threading.Event()
+    self.parent_pid = None
+    super(ChildProcess, self).__init__('child')
+
+  @Process.install('link_me')
+  def link_me(self, from_pid, body):
+    log.info('Got link request')
+    self.parent_pid = from_pid
+    log.info('Sending link')
+    self.link(from_pid)
+    log.info('Sent link')
+    self.link_event.set()
+    log.info('Set link event')
+
+  def exited(self, pid):
+    log.info('ChildProcess got exited event for %s' % pid)
+    if pid == self.parent_pid:
+      self.exit_event.set()
+
+
+class ParentProcess(Process):
+  def __init__(self):
+    super(ParentProcess, self).__init__('parent')
+
+  def exited(self, pid):
+    log.info('ParentProcess got exited event for %s' % pid)
 
 
 class TestHttpd(EphemeralContextTestCase):
@@ -176,27 +201,84 @@ class TestHttpd(EphemeralContextTestCase):
     class PingPongProcess(Process):
       def __init__(self, name, **kw):
         self.ping_event = threading.Event()
+        self.ping_body = None
         self.pong_event = threading.Event()
+        self.pong_body = None
         super(PingPongProcess, self).__init__(name, **kw)
 
       @Process.install('ping')
       def ping(self, from_pid, body):
+        self.ping_body = body
         self.ping_event.set()
         log.info('%s got ping' % self.pid)
-        self.send(from_pid, 'pong')
+        self.send(from_pid, 'pong', body=body)
 
       @Process.install('pong')
       def pong(self, from_pid, body):
         log.info('%s got pong' % self.pid)
+        self.pong_body = body
         self.pong_event.set()
 
     proc1 = PingPongProcess('proc1')
     proc2 = PingPongProcess('proc2')
-
     pid1 = self.context.spawn(proc1)
     pid2 = self.context.spawn(proc2)
 
+    # ping with body
+    proc1.send(pid2, 'ping', 'with_body')
+    proc1.pong_event.wait(timeout=1)
+    assert proc1.pong_event.is_set()
+    assert proc2.ping_event.is_set()
+    assert proc1.pong_body == 'with_body'
+    assert proc2.ping_body == 'with_body'
+
+    proc1.pong_event.clear()
+    proc2.ping_event.clear()
+
+    # ping without body
     proc1.send(pid2, 'ping')
     proc1.pong_event.wait(timeout=1)
     assert proc1.pong_event.is_set()
     assert proc2.ping_event.is_set()
+    assert proc1.pong_body == ''
+    assert proc2.ping_body == ''
+
+  # Not sure why this doesn't work.
+  @pytest.mark.xfail
+  def test_link_exit_remote(self):
+    parent_context = Context()
+    parent_context.start()
+    parent = ParentProcess()
+    parent_context.spawn(parent)
+
+    child = ChildProcess()
+    self.context.spawn(child)
+
+    parent.send(child.pid, 'link_me')
+
+    child.link_event.wait(timeout=1.0)
+    assert child.link_event.is_set()
+    assert not child.exit_event.is_set()
+
+    parent_context.terminate(parent.pid)
+    parent_context.stop()
+
+    child.send(parent.pid, 'this_will_break')
+    child.exit_event.wait(timeout=1)
+    assert child.exit_event.is_set()
+
+  def test_link_exit_local(self):
+    parent = ParentProcess()
+    self.context.spawn(parent)
+    child = ChildProcess()
+    self.context.spawn(child)
+
+    parent.send(child.pid, 'link_me')
+    child.link_event.wait(timeout=1.0)
+    assert child.link_event.is_set()
+    assert not child.exit_event.is_set()
+
+    log.info('*** Terminating parent.pid')
+    self.context.terminate(parent.pid)
+    child.exit_event.wait(timeout=1)
+    assert child.exit_event.is_set()

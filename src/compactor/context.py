@@ -1,13 +1,18 @@
 import asyncio
-from collections import defaultdict
 import logging
 import socket
 import threading
+from collections import defaultdict
+from functools import partial
 
 from .httpd import HTTPD
+from .request import encode_request
 
+from tornado import gen, stack_context
+from tornado.ioloop import IOLoop
+from tornado.iostream import IOStream
 from tornado.netutil import bind_sockets
-from tornado.httpclient import AsyncHTTPClient, HTTPRequest
+from tornado.platform.asyncio import BaseAsyncIOLoop
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +20,7 @@ log = logging.getLogger(__name__)
 class Context(threading.Thread):
   _SINGLETON = None
   _LOCK = threading.Lock()
+  CONNECT_TIMEOUT_SECS = 5
 
   class Error(Exception): pass
   class InvalidProcess(Error): pass
@@ -37,18 +43,29 @@ class Context(threading.Thread):
         cls._SINGLETON = cls(delegate=delegate, **kw)
     return cls._SINGLETON
 
-  def __init__(self, delegate="", loop=None, acks=False):
+  def __init__(self, delegate="", loop=None):
     self._processes = {}
     self._links = defaultdict(set)
     self.delegate = delegate
-    self.loop = loop or asyncio.new_event_loop()
+    loop = loop or asyncio.new_event_loop()
+    class CustomIOLoop(BaseAsyncIOLoop):
+      def initialize(self):
+        super(CustomIOLoop, self).initialize(loop, close_loop=False)
+    self.loop = CustomIOLoop()
     self.socket, self.ip, self.port = self.make_socket()
-    self.http = HTTPD(self.socket, self.loop, acks=acks)
-    self.client = AsyncHTTPClient(io_loop=self.http.loop)
+    self.http = HTTPD(self.socket, self.loop)
+    self._connections = {}
     super(Context, self).__init__()
     self.daemon = True
     self.lock = threading.Lock()
     self.__id = 1
+
+  def is_local(self, pid):
+    return self.ip == pid.ip and self.port == pid.port
+
+  def assert_local_pid(self, pid):
+    if not self.is_local(pid):
+      raise self.InvalidProcess('Operation only valid for local processes!')
 
   def unique_suffix(self):
     with self.lock:
@@ -56,9 +73,14 @@ class Context(threading.Thread):
       return suffix
 
   def run(self):
-    self.loop.run_forever()
+    self.loop.start()
 
   def stop(self):
+    pids = list(self._processes)
+    for pid in pids:
+      self.terminate(pid)
+    for connection in self._connections.values():
+      connection.close()
     self.loop.stop()
     self.loop.close()
 
@@ -78,34 +100,94 @@ class Context(threading.Thread):
       raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
 
   def dispatch(self, pid, method, *args):
+    self.assert_local_pid(pid)
     function = self._get_function(pid, method)
-    self.loop.call_soon_threadsafe(function, *args)
+    self.loop.add_callback(function, *args)
 
   def delay(self, amount, pid, method, *args):
+    self.assert_local_pid(pid)
     function = self._get_function(pid, method)
-    self.loop.call_later(amount, function, *args)
+    self.loop.add_timeout(self.loop.time() + amount, function, *args)
+
+  def maybe_connect(self, to_pid, callback=None):
+    """Synchronously a connection to to_pid or return a connection if it exists."""
+    connect_event = threading.Event()
+
+    callback = stack_context.wrap(callback or (lambda stream: None))
+
+    def streaming_callback(data):
+      # we are not guaranteed to get an acknowledgement, but log and discard bytes if we do.
+      log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
+
+    def on_connect(exit_cb, stream):
+      self._connections[to_pid] = stream
+      self.loop.add_callback(stream.read_until_close, exit_cb,
+          streaming_callback=streaming_callback)
+      log.info('Connection to %s established' % to_pid)
+      callback(stream)
+
+    stream = self._connections.get(to_pid)
+
+    if stream is not None:
+      callback(stream)
+      return
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    stream = IOStream(sock, io_loop=self.loop)
+    stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
+    connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
+    stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+    log.info('Establishing connection to %s' % to_pid)
 
   def send(self, from_pid, to_pid, method, body=None):
-    body = body or b''
-    request = HTTPRequest(
-        url=to_pid.as_url(method),
-        method='POST',
-        user_agent='libprocess/%s' % from_pid,
-        body=body,
-    )
+    """Send a message method from_pid to_pid with body (optional)"""
 
-    def callback(response):
-      # we are not guaranteed to get an acknowledgement, but log if we do
-      log.info('Received acknowledgement for %s => %s/%s: %s' % (
-          from_pid, to_pid, method, response))
+    # short circuit for local processes
+    if to_pid in self._processes:
+      log.info('Doing local dispatch of %s => %s (method: %s)' % (
+           from_pid, to_pid, method))
+      self.dispatch(to_pid, method, from_pid, body or b'')
+      return
+
+    request_data = encode_request(from_pid, to_pid, method, body=body)
 
     log.info('Sending POST %s => %s (payload: %d bytes)' % (
-        from_pid, to_pid.as_url(method), len(body)))
+        from_pid, to_pid.as_url(method), len(request_data)))
+    log.debug(request_data)
 
-    self.client.fetch(request, callback=callback)
+    def on_connect(stream):
+      log.info('Writing %s from %s to %s' % (len(request_data), from_pid, to_pid))
+      stream.write(request_data)
+      log.info('Wrote %s from %s to %s' % (len(request_data), from_pid, to_pid))
+
+    self.maybe_connect(to_pid, on_connect)
+
+  def __erase_link(self, to_pid):
+    for pid, links in self._links.items():
+      try:
+        links.remove(to_pid)
+        self._processes[pid].exited(to_pid)
+      except KeyError as e:
+        continue
+
+  def __on_exit(self, to_pid, body):
+    stream = self._connections.pop(to_pid, None)
+    if stream is None:
+      log.error('Received disconnection from %s but no stream found.' % to_pid)
+    self.__erase_link(to_pid)
 
   def link(self, pid, to):
-    self._links[pid].add(to)
+    def really_link():
+      self._links[pid].add(to)
+      log.info('Added link from %s to %s' % (pid, to))
+
+    def on_connect(stream):
+      really_link()
+
+    if self.is_local(pid):
+      really_link()
+    else:
+      self.maybe_connect(to, on_connect)
 
   def terminate(self, pid):
     log.info('Terminating %s' % pid)
@@ -113,9 +195,7 @@ class Context(threading.Thread):
     if process:
       log.info('Unmounting %s' % process)
       self.http.unmount_process(process)
-    for link in self._links.pop(pid, []):
-      # TODO(wickman) Not sure why libprocess doesn't send termination events
-      pass
+    self.__erase_link(pid)
 
   def __str__(self):
     return 'Context(%s:%s)' % (self.ip, self.port)
