@@ -1,5 +1,4 @@
 import functools
-import threading
 
 from .context import Context
 from .process import Process
@@ -11,7 +10,6 @@ _ROOT_CONTEXT = None
 def initialize(delegate="", **kw):
   global _ROOT_CONTEXT
   _ROOT_CONTEXT = Context.singleton(delegate=delegate, **kw)
-  print(_ROOT_CONTEXT)
   if not _ROOT_CONTEXT.is_alive():
     _ROOT_CONTEXT.start()
 
@@ -50,7 +48,6 @@ del after_init
 
 route = Process.route
 install = Process.install
-from tornado.gen import Task as task
 
 
 __all__ = (

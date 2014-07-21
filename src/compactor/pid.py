@@ -1,4 +1,6 @@
+
 class PID(object):
+
   __slots__ = ('ip', 'port', 'id')
 
   @classmethod
@@ -21,9 +23,13 @@ class PID(object):
 
   def __eq__(self, other):
     return isinstance(other, PID) and (
-        self.ip == other.ip and
-        self.port == other.port and
-        self.id == other.id)
+      self.ip == other.ip and
+      self.port == other.port and
+      self.id == other.id
+    )
+
+  def __ne__(self, other):
+    return not (self == other)
 
   def as_url(self, endpoint=None):
     url = 'http://%s:%s/%s' % (self.ip, self.port, self.id)
