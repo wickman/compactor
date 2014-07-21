@@ -8,7 +8,7 @@ from .pid import PID
 
 from tornado import gen
 from tornado.httpserver import HTTPServer
-from tornado.web import RequestHandler, Application, HTTPError, asynchronous
+from tornado.web import RequestHandler, Application, HTTPError
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +39,6 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
         self.__name = kw.pop('name')
         super(WireProtocolMessageHandler, self).initialize(**kw)
 
-    @asynchronous
     def post(self, *args, **kw):
         log.info('Handling %s for %s' % (self.__name, self.process.pid))
 
@@ -56,7 +55,7 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
         self.process.handle_message(self.__name, process, self.request.body)
 
         self.set_status(202)
-        self.flush(include_footers=True)
+        self.finish()
 
 
 class RoutedRequestHandler(ProcessBaseHandler):
