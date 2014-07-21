@@ -1,15 +1,15 @@
-import asyncio
 import logging
 import socket
 import threading
+import trollius as asyncio
+import os
 from collections import defaultdict
 from functools import partial
 
 from .httpd import HTTPD
 from .request import encode_request
 
-from tornado import gen, stack_context
-from tornado.ioloop import IOLoop
+from tornado import stack_context
 from tornado.iostream import IOStream
 from tornado.netutil import bind_sockets
 from tornado.platform.asyncio import BaseAsyncIOLoop
@@ -18,184 +18,206 @@ log = logging.getLogger(__name__)
 
 
 class Context(threading.Thread):
-  _SINGLETON = None
-  _LOCK = threading.Lock()
-  CONNECT_TIMEOUT_SECS = 5
 
-  class Error(Exception): pass
-  class InvalidProcess(Error): pass
-  class InvalidMethod(Error): pass
+    _SINGLETON = None
+    _LOCK = threading.Lock()
 
-  @classmethod
-  def make_socket(cls):
-    ip = socket.gethostbyname(socket.gethostname())
-    s = bind_sockets(0, address=ip)[0]
-    ip, port = s.getsockname()
-    return s, ip, port
+    CONNECT_TIMEOUT_SECS = 5
 
-  @classmethod
-  def singleton(cls, delegate="", **kw):
-    with cls._LOCK:
-      if cls._SINGLETON:
-        if cls._SINGLETON.delegate != delegate:
-          raise RuntimeError('Attempting to construct different singleton context.')
-      else:
-        cls._SINGLETON = cls(delegate=delegate, **kw)
-    return cls._SINGLETON
+    class Error(Exception):
+        pass
 
-  def __init__(self, delegate="", loop=None):
-    self._processes = {}
-    self._links = defaultdict(set)
-    self.delegate = delegate
-    loop = loop or asyncio.new_event_loop()
-    class CustomIOLoop(BaseAsyncIOLoop):
-      def initialize(self):
-        super(CustomIOLoop, self).initialize(loop, close_loop=False)
-    self.loop = CustomIOLoop()
-    self.socket, self.ip, self.port = self.make_socket()
-    self.http = HTTPD(self.socket, self.loop)
-    self._connections = {}
-    super(Context, self).__init__()
-    self.daemon = True
-    self.lock = threading.Lock()
-    self.__id = 1
+    class InvalidProcess(Error):
+        pass
 
-  def is_local(self, pid):
-    return self.ip == pid.ip and self.port == pid.port
+    class InvalidMethod(Error):
+        pass
 
-  def assert_local_pid(self, pid):
-    if not self.is_local(pid):
-      raise self.InvalidProcess('Operation only valid for local processes!')
+    @classmethod
+    def make_socket(cls):
+        if "LIBPROCESS_IP" in os.environ:
+            ip = os.environ["LIBPROCESS_IP"]
+        else:
+            ip = socket.gethostbyname(socket.gethostname())
 
-  def unique_suffix(self):
-    with self.lock:
-      suffix, self.__id = '(%d)' % self.__id, self.__id + 1
-      return suffix
+        s = bind_sockets(0, address=ip)[0]
+        ip, port = s.getsockname()
 
-  def run(self):
-    self.loop.start()
+        return s, ip, port
 
-  def stop(self):
-    pids = list(self._processes)
-    for pid in pids:
-      self.terminate(pid)
-    for connection in self._connections.values():
-      connection.close()
-    self.loop.stop()
-    self.loop.close()
+    @classmethod
+    def singleton(cls, delegate="", **kw):
+        with cls._LOCK:
+            if cls._SINGLETON:
+                if cls._SINGLETON.delegate != delegate:
+                    raise RuntimeError('Attempting to construct different singleton context.')
+            else:
+                cls._SINGLETON = cls(delegate=delegate, **kw)
+        return cls._SINGLETON
 
-  def spawn(self, process):
-    process.bind(self)
-    process.initialize()
-    self.http.mount_process(process)
-    self._processes[process.pid] = process
-    return process.pid
+    def __init__(self, delegate="", loop=None):
+        self._processes = {}
+        self._links = defaultdict(set)
+        self.delegate = delegate
+        loop = loop or asyncio.new_event_loop()
 
-  def _get_function(self, pid, method):
-    try:
-      return getattr(self._processes[pid], method)
-    except KeyError:
-      raise self.InvalidProcess('Unknown process %s' % pid)
-    except AttributeError:
-      raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
+        class CustomIOLoop(BaseAsyncIOLoop):
+            def initialize(self):
+                super(CustomIOLoop, self).initialize(loop, close_loop=False)
 
-  def dispatch(self, pid, method, *args):
-    self.assert_local_pid(pid)
-    function = self._get_function(pid, method)
-    self.loop.add_callback(function, *args)
+        self.loop = CustomIOLoop()
+        self.socket, self.ip, self.port = self.make_socket()
+        self.http = HTTPD(self.socket, self.loop)
+        self._connections = {}
+        super(Context, self).__init__()
+        self.daemon = True
+        self.lock = threading.Lock()
+        self.__id = 1
 
-  def delay(self, amount, pid, method, *args):
-    self.assert_local_pid(pid)
-    function = self._get_function(pid, method)
-    self.loop.add_timeout(self.loop.time() + amount, function, *args)
+    def is_local(self, pid):
+        return self.ip == pid.ip and self.port == pid.port
 
-  def maybe_connect(self, to_pid, callback=None):
-    """Synchronously a connection to to_pid or return a connection if it exists."""
-    connect_event = threading.Event()
+    def assert_local_pid(self, pid):
+        if not self.is_local(pid):
+            raise self.InvalidProcess('Operation only valid for local processes!')
 
-    callback = stack_context.wrap(callback or (lambda stream: None))
+    def unique_suffix(self):
+        with self.lock:
+            suffix, self.__id = '(%d)' % self.__id, self.__id + 1
+            return suffix
 
-    def streaming_callback(data):
-      # we are not guaranteed to get an acknowledgement, but log and discard bytes if we do.
-      log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
+    def run(self):
+        self.loop.start()
 
-    def on_connect(exit_cb, stream):
-      self._connections[to_pid] = stream
-      self.loop.add_callback(stream.read_until_close, exit_cb,
-          streaming_callback=streaming_callback)
-      log.info('Connection to %s established' % to_pid)
-      callback(stream)
+    def stop(self):
+        log.debug("Stopping context")
 
-    stream = self._connections.get(to_pid)
+        pids = list(self._processes)
 
-    if stream is not None:
-      callback(stream)
-      return
+        # Clean up the context
+        for pid in pids:
+            self.terminate(pid)
+        for connection in self._connections.values():
+            connection.close()
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-    stream = IOStream(sock, io_loop=self.loop)
-    stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
-    connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
-    stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
-    log.info('Establishing connection to %s' % to_pid)
+        self.loop.stop()
+        self.loop.close()
 
-  def send(self, from_pid, to_pid, method, body=None):
-    """Send a message method from_pid to_pid with body (optional)"""
+    def spawn(self, process):
+        process.bind(self)
+        process.initialize()
+        self.http.mount_process(process)
+        self._processes[process.pid] = process
+        return process.pid
 
-    # short circuit for local processes
-    if to_pid in self._processes:
-      log.info('Doing local dispatch of %s => %s (method: %s)' % (
-           from_pid, to_pid, method))
-      self.dispatch(to_pid, method, from_pid, body or b'')
-      return
+    def _get_function(self, pid, method):
+        try:
+            return getattr(self._processes[pid], method)
+        except KeyError:
+            raise self.InvalidProcess('Unknown process %s' % pid)
+        except AttributeError:
+            raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
 
-    request_data = encode_request(from_pid, to_pid, method, body=body)
+    def dispatch(self, pid, method, *args):
+        self.assert_local_pid(pid)
+        function = self._get_function(pid, method)
+        self.loop.add_callback(function, *args)
 
-    log.info('Sending POST %s => %s (payload: %d bytes)' % (
-        from_pid, to_pid.as_url(method), len(request_data)))
-    log.debug(request_data)
+    def delay(self, amount, pid, method, *args):
+        self.assert_local_pid(pid)
+        function = self._get_function(pid, method)
+        self.loop.add_timeout(self.loop.time() + amount, function, *args)
 
-    def on_connect(stream):
-      log.info('Writing %s from %s to %s' % (len(request_data), from_pid, to_pid))
-      stream.write(request_data)
-      log.info('Wrote %s from %s to %s' % (len(request_data), from_pid, to_pid))
+    def maybe_connect(self, to_pid, callback=None):
+        """Synchronously open a connection to to_pid or return a connection if it exists."""
 
-    self.maybe_connect(to_pid, on_connect)
+        callback = stack_context.wrap(callback or (lambda stream: None))
 
-  def __erase_link(self, to_pid):
-    for pid, links in self._links.items():
-      try:
-        links.remove(to_pid)
-        self._processes[pid].exited(to_pid)
-      except KeyError as e:
-        continue
+        def streaming_callback(data):
+            # we are not guaranteed to get an acknowledgment, but log and discard bytes if we do.
+            log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
 
-  def __on_exit(self, to_pid, body):
-    stream = self._connections.pop(to_pid, None)
-    if stream is None:
-      log.error('Received disconnection from %s but no stream found.' % to_pid)
-    self.__erase_link(to_pid)
+        def on_connect(exit_cb, stream):
+            self._connections[to_pid] = stream
+            callback(stream)
+            self.loop.add_callback(stream.read_until_close, exit_cb,
+                                   streaming_callback=streaming_callback)
+            log.info('Connection to %s established' % to_pid)
 
-  def link(self, pid, to):
-    def really_link():
-      self._links[pid].add(to)
-      log.info('Added link from %s to %s' % (pid, to))
+        stream = self._connections.get(to_pid)
 
-    def on_connect(stream):
-      really_link()
+        if stream is not None:
+            callback(stream)
+            return
 
-    if self.is_local(pid):
-      really_link()
-    else:
-      self.maybe_connect(to, on_connect)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
 
-  def terminate(self, pid):
-    log.info('Terminating %s' % pid)
-    process = self._processes.pop(pid, None)
-    if process:
-      log.info('Unmounting %s' % process)
-      self.http.unmount_process(process)
-    self.__erase_link(pid)
+        stream = IOStream(sock, io_loop=self.loop)
+        stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
 
-  def __str__(self):
-    return 'Context(%s:%s)' % (self.ip, self.port)
+        connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
+
+        log.info('Establishing connection to %s' % to_pid)
+        stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+
+    def send(self, from_pid, to_pid, method, body=None):
+        """Send a message method from_pid to_pid with body (optional)"""
+
+        # short circuit for local processes
+        if to_pid in self._processes:
+            log.info('Doing local dispatch of %s => %s (method: %s)' % (
+                     from_pid, to_pid, method))
+            self.dispatch(to_pid, method, from_pid, body or b'')
+            return
+
+        request_data = encode_request(from_pid, to_pid, method, body=body)
+
+        log.info('Sending POST %s => %s (payload: %d bytes)' % (
+                 from_pid, to_pid.as_url(method), len(request_data)))
+        log.debug(request_data)
+
+        def on_connect(stream):
+            log.info('Writing %s from %s to %s' % (len(request_data), from_pid, to_pid))
+            stream.write(request_data)
+            log.info('Wrote %s from %s to %s' % (len(request_data), from_pid, to_pid))
+
+        self.maybe_connect(to_pid, on_connect)
+
+    def __erase_link(self, to_pid):
+        for pid, links in self._links.items():
+            try:
+                links.remove(to_pid)
+                self._processes[pid].exited(to_pid)
+            except KeyError:
+                continue
+
+    def __on_exit(self, to_pid, body):
+        print "adsdljg;ghsdh"
+        stream = self._connections.pop(to_pid, None)
+        if stream is None:
+            log.error('Received disconnection from %s but no stream found.' % to_pid)
+        self.__erase_link(to_pid)
+
+    def link(self, pid, to):
+        def really_link():
+            self._links[pid].add(to)
+            log.info('Added link from %s to %s' % (pid, to))
+
+        def on_connect(stream):
+            really_link()
+
+        if self.is_local(pid):
+            really_link()
+        else:
+            self.maybe_connect(to, on_connect)
+
+    def terminate(self, pid):
+        log.info('Terminating %s' % pid)
+        process = self._processes.pop(pid, None)
+        if process:
+            log.info('Unmounting %s' % process)
+            self.http.unmount_process(process)
+        self.__erase_link(pid)
+
+    def __str__(self):
+        return 'Context(%s:%s)' % (self.ip, self.port)
