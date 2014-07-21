@@ -192,7 +192,6 @@ class Context(threading.Thread):
                 continue
 
     def __on_exit(self, to_pid, body):
-        print "adsdljg;ghsdh"
         stream = self._connections.pop(to_pid, None)
         if stream is None:
             log.error('Received disconnection from %s but no stream found.' % to_pid)
