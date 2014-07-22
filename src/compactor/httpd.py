@@ -3,10 +3,12 @@ from __future__ import absolute_import
 import logging
 import re
 import types
+import time
 
 from .pid import PID
 
 from tornado import gen
+from tornado import httputil
 from tornado.httpserver import HTTPServer
 from tornado.web import RequestHandler, Application, HTTPError
 
@@ -38,6 +40,11 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
     def initialize(self, **kw):
         self.__name = kw.pop('name')
         super(WireProtocolMessageHandler, self).initialize(**kw)
+
+    def set_default_headers(self):
+        self._headers = httputil.HTTPHeaders({
+            "Date": httputil.format_timestamp(time.time())
+        })
 
     def post(self, *args, **kw):
         log.info('Handling %s for %s' % (self.__name, self.process.pid))
