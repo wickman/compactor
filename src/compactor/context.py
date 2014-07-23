@@ -174,7 +174,6 @@ class Context(threading.Thread):
 
         log.info('Sending POST %s => %s (payload: %d bytes)' % (
                  from_pid, to_pid.as_url(method), len(request_data)))
-        log.debug(request_data)
 
         def on_connect(stream):
             log.info('Writing %s from %s to %s' % (len(request_data), from_pid, to_pid))
