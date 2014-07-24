@@ -57,12 +57,10 @@ class Context(threading.Thread):
 
     def __init__(self, delegate="", loop=None):
         self.delegate = delegate
-        self.lock = threading.Lock()
 
         self._processes = {}
         self._connections = {}
         self._links = defaultdict(set)
-        self._id = 1
 
         # Create a default loop if one isn't provided
         if not loop:
@@ -76,8 +74,14 @@ class Context(threading.Thread):
         self.socket, self.ip, self.port = self.make_socket()
         self.http = HTTPD(self.socket, self.loop)
 
+        if not self.socket:
+            raise Exception("Failed to bind to socket")
+        log.debug("Context bound to %s:%d", self.ip, self.port)
+
         super(Context, self).__init__()
         self.daemon = True
+        self.lock = threading.Lock()
+        self._id = 1
 
     def is_local(self, pid):
         return self.ip == pid.ip and self.port == pid.port
@@ -158,6 +162,8 @@ class Context(threading.Thread):
             return
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        if not sock:
+            raise Exception("Failed opening socket")
 
         stream = IOStream(sock, io_loop=self.loop)
         stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
