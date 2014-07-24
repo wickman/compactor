@@ -100,11 +100,19 @@ class HTTPD(object):
         """
 
         self.loop = loop
+        self.sock = sock
+
         self.app = Application(handlers=[(r'/.*$', Blackhole)])
         self.server = HTTPServer(self.app, io_loop=self.loop)
         self.server.add_sockets([sock])
 
-        sock.listen(1024)
+        self.sock.listen(1024)
+
+    def terminate(self):
+        log.info('Terminating HTTP server and all connections')
+
+        self.server.close_all_connections()
+        self.sock.close()
 
     def mount_process(self, process):
         """
