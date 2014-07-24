@@ -163,13 +163,6 @@ class Context(threading.Thread):
     def send(self, from_pid, to_pid, method, body=None):
         """Send a message method from_pid to_pid with body (optional)"""
 
-        # short circuit for local processes
-        if to_pid in self._processes:
-            log.info('Doing local dispatch of %s => %s (method: %s)' % (
-                     from_pid, to_pid, method))
-            self.dispatch(to_pid, method, from_pid, body or b'')
-            return
-
         request_data = encode_request(from_pid, to_pid, method, body=body)
 
         log.info('Sending POST %s => %s (payload: %d bytes)' % (
