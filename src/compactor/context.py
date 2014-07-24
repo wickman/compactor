@@ -56,15 +56,10 @@ class Context(threading.Thread):
         return cls._SINGLETON
 
     def __init__(self, delegate="", loop=None):
-        self.delegate = delegate
-
         self._processes = {}
-        self._connections = {}
         self._links = defaultdict(set)
-
-        # Create a default loop if one isn't provided
-        if not loop:
-            loop = asyncio.new_event_loop()
+        self.delegate = delegate
+        loop = loop or asyncio.new_event_loop()
 
         class CustomIOLoop(BaseAsyncIOLoop):
             def initialize(self):
@@ -73,6 +68,7 @@ class Context(threading.Thread):
         self.loop = CustomIOLoop()
         self.socket, self.ip, self.port = self.make_socket()
         self.http = HTTPD(self.socket, self.loop)
+        self._connections = {}
 
         if not self.socket:
             raise Exception("Failed to bind to socket")
@@ -81,7 +77,7 @@ class Context(threading.Thread):
         super(Context, self).__init__()
         self.daemon = True
         self.lock = threading.Lock()
-        self._id = 1
+        self.__id = 1
 
     def is_local(self, pid):
         return self.ip == pid.ip and self.port == pid.port
