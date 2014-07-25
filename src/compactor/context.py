@@ -161,6 +161,9 @@ class Context(threading.Thread):
         if not sock:
             raise Exception("Failed opening socket")
 
+        # Set the socket non-blocking
+        sock.setblocking(0)
+
         stream = IOStream(sock, io_loop=self.loop)
         stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
 
