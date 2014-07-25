@@ -35,12 +35,24 @@ class Context(threading.Thread):
 
     @classmethod
     def make_socket(cls):
+        """Bind to a new socket. If LIBPROCESS_PORT or LIBPROCESS_IP are
+        configured in the environment, these will be used for socket
+        connectivity.
+        """
+
+        # Figure out the IP address
         if "LIBPROCESS_IP" in os.environ:
             ip = os.environ["LIBPROCESS_IP"]
         else:
             ip = socket.gethostbyname(socket.gethostname())
 
-        s = bind_sockets(0, address=ip)[0]
+        # Figure out the port
+        if "LIBPROCESS_PORT" in os.environ:
+            port = int(os.environ["LIBPROCESS_PORT"])
+        else:
+            port = 0  # We bind to a random high port
+
+        s = bind_sockets(port, address=ip)[0]
         ip, port = s.getsockname()
 
         return s, ip, port
