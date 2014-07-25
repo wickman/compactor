@@ -177,6 +177,7 @@ class Context(threading.Thread):
         sock.setblocking(0)
 
         stream = IOStream(sock, io_loop=self.loop)
+        stream.set_nodelay(True)
         stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
 
         connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
