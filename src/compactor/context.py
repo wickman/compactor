@@ -157,11 +157,11 @@ class Context(threading.Thread):
             log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
 
         def on_connect(exit_cb, stream):
+            log.info('Connection to %s established' % to_pid)
             self._connections[to_pid] = stream
             callback(stream)
             self.loop.add_callback(stream.read_until_close, exit_cb,
                                    streaming_callback=streaming_callback)
-            log.info('Connection to %s established' % to_pid)
 
         stream = self._connections.get(to_pid)
 
@@ -184,6 +184,7 @@ class Context(threading.Thread):
 
         log.info('Establishing connection to %s' % to_pid)
         stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+        log.info('Maybe connected to %s' % to_pid)
 
     def send(self, from_pid, to_pid, method, body=None):
         """Send a message method from_pid to_pid with body (optional)"""
