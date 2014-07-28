@@ -184,6 +184,8 @@ class Context(threading.Thread):
 
         log.info('Establishing connection to %s' % to_pid)
         stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+        if stream.closed():
+            raise Exception("Failed to initiate stream connection")
         log.info('Maybe connected to %s' % to_pid)
 
     def send(self, from_pid, to_pid, method, body=None):
