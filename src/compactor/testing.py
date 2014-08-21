@@ -8,19 +8,19 @@ log = logging.getLogger(__name__)
 
 
 class EphemeralContextTestCase(unittest.TestCase):
-    def setUp(self):
-        self.context = Context()
-        log.debug('XXX Starting context')
-        self.context.start()
+  def setUp(self):
+    self.context = Context()
+    log.debug('XXX Starting context')
+    self.context.start()
 
-    def tearDown(self):
-        log.debug('XXX Stopping context')
-        self.context.stop()
+  def tearDown(self):
+    log.debug('XXX Stopping context')
+    self.context.stop()
 
 
 @contextmanager
 def ephemeral_context(**kw):
-    context = Context(**kw)
-    context.start()
-    yield context
-    context.stop()
+  context = Context(**kw)
+  context.start()
+  yield context
+  context.stop()
