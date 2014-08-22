@@ -1,15 +1,19 @@
-import asyncio
 import logging
 import socket
 import threading
+import os
+try:
+    import asyncio
+except ImportError:
+    import trollius as asyncio
+
 from collections import defaultdict
 from functools import partial
 
 from .httpd import HTTPD
 from .request import encode_request
 
-from tornado import gen, stack_context
-from tornado.ioloop import IOLoop
+from tornado import stack_context
 from tornado.iostream import IOStream
 from tornado.netutil import bind_sockets
 from tornado.platform.asyncio import BaseAsyncIOLoop
@@ -18,19 +22,43 @@ log = logging.getLogger(__name__)
 
 
 class Context(threading.Thread):
+
   _SINGLETON = None
   _LOCK = threading.Lock()
+
   CONNECT_TIMEOUT_SECS = 5
 
-  class Error(Exception): pass
-  class InvalidProcess(Error): pass
-  class InvalidMethod(Error): pass
+  class Error(Exception):
+    pass
+
+  class InvalidProcess(Error):
+    pass
+
+  class InvalidMethod(Error):
+    pass
 
   @classmethod
   def make_socket(cls):
-    ip = socket.gethostbyname(socket.gethostname())
-    s = bind_sockets(0, address=ip)[0]
+    """Bind to a new socket. If LIBPROCESS_PORT or LIBPROCESS_IP are
+    configured in the environment, these will be used for socket
+    connectivity.
+    """
+
+    # Figure out the IP address
+    if "LIBPROCESS_IP" in os.environ:
+      ip = os.environ["LIBPROCESS_IP"]
+    else:
+      ip = socket.gethostbyname(socket.gethostname())
+
+    # Figure out the port
+    if "LIBPROCESS_PORT" in os.environ:
+      port = int(os.environ["LIBPROCESS_PORT"])
+    else:
+      port = 0  # We bind to a random high port
+
+    s = bind_sockets(port, address=ip)[0]
     ip, port = s.getsockname()
+
     return s, ip, port
 
   @classmethod
@@ -48,13 +76,20 @@ class Context(threading.Thread):
     self._links = defaultdict(set)
     self.delegate = delegate
     loop = loop or asyncio.new_event_loop()
+
     class CustomIOLoop(BaseAsyncIOLoop):
       def initialize(self):
         super(CustomIOLoop, self).initialize(loop, close_loop=False)
+
     self.loop = CustomIOLoop()
     self.socket, self.ip, self.port = self.make_socket()
     self.http = HTTPD(self.socket, self.loop)
     self._connections = {}
+
+    if not self.socket:
+      raise Exception("Failed to bind to socket")
+    log.debug("Context bound to %s:%d", self.ip, self.port)
+
     super(Context, self).__init__()
     self.daemon = True
     self.lock = threading.Lock()
@@ -73,16 +108,23 @@ class Context(threading.Thread):
       return suffix
 
   def run(self):
+    # Start the loop for this context, this is a blocking call and will
+    # keep the thread alive.
     self.loop.start()
+    self.loop.close()
 
   def stop(self):
+    log.debug("Stopping context")
+
     pids = list(self._processes)
+
+    # Clean up the context
     for pid in pids:
       self.terminate(pid)
     for connection in self._connections.values():
       connection.close()
+
     self.loop.stop()
-    self.loop.close()
 
   def spawn(self, process):
     process.bind(self)
@@ -110,21 +152,20 @@ class Context(threading.Thread):
     self.loop.add_timeout(self.loop.time() + amount, function, *args)
 
   def maybe_connect(self, to_pid, callback=None):
-    """Synchronously a connection to to_pid or return a connection if it exists."""
-    connect_event = threading.Event()
+    """Synchronously open a connection to to_pid or return a connection if it exists."""
 
     callback = stack_context.wrap(callback or (lambda stream: None))
 
     def streaming_callback(data):
-      # we are not guaranteed to get an acknowledgement, but log and discard bytes if we do.
+      # we are not guaranteed to get an acknowledgment, but log and discard bytes if we do.
       log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
 
     def on_connect(exit_cb, stream):
-      self._connections[to_pid] = stream
-      self.loop.add_callback(stream.read_until_close, exit_cb,
-          streaming_callback=streaming_callback)
       log.info('Connection to %s established' % to_pid)
+      self._connections[to_pid] = stream
       callback(stream)
+      self.loop.add_callback(stream.read_until_close, exit_cb,
+                             streaming_callback=streaming_callback)
 
     stream = self._connections.get(to_pid)
 
@@ -133,11 +174,23 @@ class Context(threading.Thread):
       return
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    if not sock:
+      raise Exception("Failed opening socket")
+
+    # Set the socket non-blocking
+    sock.setblocking(0)
+
     stream = IOStream(sock, io_loop=self.loop)
+    stream.set_nodelay(True)
     stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
+
     connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
-    stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+
     log.info('Establishing connection to %s' % to_pid)
+    stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+    if stream.closed():
+      raise Exception("Failed to initiate stream connection")
+    log.info('Maybe connected to %s' % to_pid)
 
   def send(self, from_pid, to_pid, method, body=None):
     """Send a message method from_pid to_pid with body (optional)"""
@@ -152,8 +205,7 @@ class Context(threading.Thread):
     request_data = encode_request(from_pid, to_pid, method, body=body)
 
     log.info('Sending POST %s => %s (payload: %d bytes)' % (
-        from_pid, to_pid.as_url(method), len(request_data)))
-    log.debug(request_data)
+         from_pid, to_pid.as_url(method), len(request_data)))
 
     def on_connect(stream):
       log.info('Writing %s from %s to %s' % (len(request_data), from_pid, to_pid))
@@ -167,10 +219,11 @@ class Context(threading.Thread):
       try:
         links.remove(to_pid)
         self._processes[pid].exited(to_pid)
-      except KeyError as e:
+      except KeyError:
         continue
 
   def __on_exit(self, to_pid, body):
+    log.info('Disconnected from %s (%s)', to_pid, body)
     stream = self._connections.pop(to_pid, None)
     if stream is None:
       log.error('Received disconnection from %s but no stream found.' % to_pid)

@@ -6,16 +6,21 @@ class Process(object):
   ROUTE_ATTRIBUTE = '__route__'
   INSTALL_ATTRIBUTE = '__mailbox__'
 
-  class Error(Exception): pass
-  class UnboundProcess(Error): pass
+  class Error(Exception):
+    pass
+
+  class UnboundProcess(Error):
+    pass
 
   @classmethod
   def route(cls, path):
     if not path.startswith('/'):
       raise ValueError('Routes must start with "/"')
+
     def wrap(fn):
       setattr(fn, cls.ROUTE_ATTRIBUTE, path)
       return fn
+
     return wrap
 
   # We'll probably need to make route and install opaque, and just have them delegate to
@@ -120,14 +125,19 @@ class ProtobufProcess(Process):
   @classmethod
   def install(cls, message_type, endpoint=None):
     endpoint = endpoint or message_type.DESCRIPTOR.full_name
+
     def wrap(fn):
       setattr(fn, cls.MESSAGE_TYPE_ATTRIBUTE, message_type)
       return Process.install(endpoint)(fn)
+
     return wrap
 
   def send(self, to, message, method_name=None):
     super(ProtobufProcess, self).send(
-        to, method_name or message.DESCRIPTOR.full_name, message.SerializeToString())
+      to,
+      method_name or message.DESCRIPTOR.full_name,
+      message.SerializeToString()
+    )
 
   def handle_message(self, name, from_pid, body):
     handler = self._message_handlers[name]
