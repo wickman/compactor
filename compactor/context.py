@@ -40,7 +40,10 @@ class Context(threading.Thread):
     """
 
     ip = os.environ.get("LIBPROCESS_IP", "0.0.0.0")
-    port = int(os.environ.get("LIBPROCESS_PORT", 0))
+    try:
+      port = int(os.environ.get("LIBPROCESS_PORT", 0))
+    except ValueError:
+      raise self.Error('Invalid LIBPROCESS_PORT provided')
 
     bound_socket = bind_sockets(port, address=ip)[0]
     ip, port = bound_socket.getsockname()
