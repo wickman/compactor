@@ -3,14 +3,11 @@ from .pid import PID
 
 
 class Process(object):
+  class Error(Exception): pass
+  class UnboundProcess(Error): pass
+
   ROUTE_ATTRIBUTE = '__route__'
   INSTALL_ATTRIBUTE = '__mailbox__'
-
-  class Error(Exception):
-    pass
-
-  class UnboundProcess(Error):
-    pass
 
   @classmethod
   def route(cls, path):

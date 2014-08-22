@@ -1,6 +1,5 @@
 
 class PID(object):
-
   __slots__ = ('ip', 'port', 'id')
 
   @classmethod

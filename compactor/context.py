@@ -22,20 +22,14 @@ log = logging.getLogger(__name__)
 
 
 class Context(threading.Thread):
+  class Error(Exception): pass
+  class InvalidProcess(Error): pass
+  class InvalidMethod(Error): pass
 
   _SINGLETON = None
   _LOCK = threading.Lock()
 
   CONNECT_TIMEOUT_SECS = 5
-
-  class Error(Exception):
-    pass
-
-  class InvalidProcess(Error):
-    pass
-
-  class InvalidMethod(Error):
-    pass
 
   @classmethod
   def make_socket(cls):
