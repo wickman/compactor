@@ -55,3 +55,43 @@ def test_protobuf_process():
 
   context.stop()
   context2.stop()
+
+
+def test_protobuf_process_local_dispatch():
+  parameter = []
+  event = threading.Event()
+
+  recv_msg = mock.MagicMock()
+  recv_msg.MergeFromString = mock.MagicMock()
+
+  def msg_init():
+    return recv_msg
+
+  send_msg = mock.MagicMock()
+  send_msg.SerializeToString = mock.MagicMock()
+  send_msg.SerializeToString.return_value = 'beepboop'
+
+  class Pinger(ProtobufProcess):
+    @ProtobufProcess.install(msg_init, endpoint='foo.bar.ping')
+    def ping(self, from_pid, message):
+      assert message == recv_msg
+      message.MergeFromString.assert_called_with('beepboop')
+      event.set()
+
+  class Ponger(ProtobufProcess):
+    pass
+
+  context = Context()
+  context.start()
+
+  pinger = Pinger('pinger')
+  ping_pid = context.spawn(pinger)
+  ponger = Ponger('ponger')
+  pong_pid = context.spawn(ponger)
+
+  ponger.send(ping_pid, send_msg, method_name='foo.bar.ping')
+
+  event.wait(timeout=1)
+  assert event.is_set()
+
+  context.stop()

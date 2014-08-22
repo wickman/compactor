@@ -16,6 +16,7 @@ def test_simple_process():
     def __init__(self, **kw):
       super(DerpProcess, self).__init__('derp', **kw)
 
+    @Process.install('ping')
     def ping(self, value):
       parameter.append(value)
       event.set()

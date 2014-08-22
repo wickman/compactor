@@ -129,11 +129,12 @@ class Context(threading.Thread):
 
   def _get_function(self, pid, method):
     try:
-      return getattr(self._processes[pid], method)
+      for mailbox, callable in self._processes[pid].iter_handlers():
+        if method == mailbox:
+          return callable
     except KeyError:
       raise self.InvalidProcess('Unknown process %s' % pid)
-    except AttributeError:
-      raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
+    raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
 
   def dispatch(self, pid, method, *args):
     self.assert_local_pid(pid)
@@ -189,12 +190,15 @@ class Context(threading.Thread):
   def send(self, from_pid, to_pid, method, body=None):
     """Send a message method from_pid to_pid with body (optional)"""
 
+    # TODO(wickman) Restore local short-circuiting.
+    """
     # short circuit for local processes
     if to_pid in self._processes:
       log.info('Doing local dispatch of %s => %s (method: %s)' % (
            from_pid, to_pid, method))
       self.dispatch(to_pid, method, from_pid, body or b'')
       return
+    """
 
     request_data = encode_request(from_pid, to_pid, method, body=body)
 
