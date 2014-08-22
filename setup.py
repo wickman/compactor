@@ -1,7 +1,7 @@
 import os
 from setuptools import setup
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 
 with open(os.path.join(os.path.dirname(__file__), 'CHANGES.rst')) as fp:
