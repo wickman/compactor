@@ -1,8 +1,12 @@
 import logging
 import socket
 import threading
-import trollius as asyncio
 import os
+try:
+    import asyncio
+except ImportError:
+    import trollius as asyncio
+
 from collections import defaultdict
 from functools import partial
 
