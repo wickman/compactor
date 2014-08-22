@@ -9,6 +9,7 @@ from compactor.testing import ephemeral_context, EphemeralContextTestCase
 
 import requests
 import pytest
+from tornado import gen
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class Web(Process):
 
   @Process.route('/ping')
   def ping(self, handler):
-    yield compactor.task(self.write_pong, handler)
+    yield gen.Task(self.write_pong, handler)
 
 
 class ScatterProcess(Process):

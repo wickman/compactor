@@ -33,14 +33,25 @@ def test_protobuf_process():
       message.MergeFromString.assert_called_with('beepboop')
       event.set()
 
+  class Ponger(ProtobufProcess):
+    pass
+
   context = Context()
   context.start()
-
   pinger = Pinger('pinger')
-  pid = context.spawn(pinger)
-  pinger.send(pid, send_msg, 'foo.bar.ping')
+  ping_pid = context.spawn(pinger)
+
+  context2 = Context()
+  context2.start()
+  ponger = Ponger('ponger')
+  pong_pid = context2.spawn(ponger)
+
+  # TODO(wickman) this doesn't actually work for local processes, hence
+  # spawning two separate contexts.
+  ponger.send(ping_pid, send_msg, method_name='foo.bar.ping')
 
   event.wait(timeout=1)
   assert event.is_set()
 
   context.stop()
+  context2.stop()
