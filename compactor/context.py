@@ -48,6 +48,9 @@ class Context(threading.Thread):
     bound_socket = bind_sockets(port, address=ip)[0]
     ip, port = bound_socket.getsockname()
 
+    if not ip or ip == "0.0.0.0":
+      ip = socket.gethostbyname(socket.gethostname())
+
     return bound_socket, ip, port
 
   @classmethod
@@ -71,8 +74,11 @@ class Context(threading.Thread):
         super(CustomIOLoop, self).initialize(loop, close_loop=False)
 
     self.loop = CustomIOLoop()
-    httpd_socket, self.ip, self.port = self.make_socket()
-    self.http = HTTPD(httpd_socket, self.loop)
+
+    self._ip = None
+    sock, self.ip, self.port = self.make_socket()
+    self.http = HTTPD(sock, self.loop)
+
     self._connections = {}
 
     super(Context, self).__init__()
