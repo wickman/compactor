@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 class Context(threading.Thread):
   class Error(Exception): pass
+  class SocketError(Error): pass
   class InvalidProcess(Error): pass
   class InvalidMethod(Error): pass
 
@@ -38,22 +39,19 @@ class Context(threading.Thread):
     connectivity.
     """
 
-    # Figure out the IP address
-    if "LIBPROCESS_IP" in os.environ:
-      ip = os.environ["LIBPROCESS_IP"]
-    else:
+    ip = os.environ.get("LIBPROCESS_IP", "0.0.0.0")
+    try:
+      port = int(os.environ.get("LIBPROCESS_PORT", 0))
+    except ValueError:
+      raise self.Error('Invalid LIBPROCESS_PORT provided')
+
+    bound_socket = bind_sockets(port, address=ip)[0]
+    ip, port = bound_socket.getsockname()
+
+    if not ip or ip == "0.0.0.0":
       ip = socket.gethostbyname(socket.gethostname())
 
-    # Figure out the port
-    if "LIBPROCESS_PORT" in os.environ:
-      port = int(os.environ["LIBPROCESS_PORT"])
-    else:
-      port = 0  # We bind to a random high port
-
-    s = bind_sockets(port, address=ip)[0]
-    ip, port = s.getsockname()
-
-    return s, ip, port
+    return bound_socket, ip, port
 
   @classmethod
   def singleton(cls, delegate="", **kw):
@@ -76,13 +74,12 @@ class Context(threading.Thread):
         super(CustomIOLoop, self).initialize(loop, close_loop=False)
 
     self.loop = CustomIOLoop()
-    self.socket, self.ip, self.port = self.make_socket()
-    self.http = HTTPD(self.socket, self.loop)
-    self._connections = {}
 
-    if not self.socket:
-      raise Exception("Failed to bind to socket")
-    log.debug("Context bound to %s:%d", self.ip, self.port)
+    self._ip = None
+    sock, self.ip, self.port = self.make_socket()
+    self.http = HTTPD(sock, self.loop)
+
+    self._connections = {}
 
     super(Context, self).__init__()
     self.daemon = True
@@ -170,7 +167,7 @@ class Context(threading.Thread):
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     if not sock:
-      raise Exception("Failed opening socket")
+      raise self.SocketError("Failed opening socket")
 
     # Set the socket non-blocking
     sock.setblocking(0)
@@ -184,7 +181,7 @@ class Context(threading.Thread):
     log.info('Establishing connection to %s' % to_pid)
     stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
     if stream.closed():
-      raise Exception("Failed to initiate stream connection")
+      raise self.SocketError("Failed to initiate stream connection")
     log.info('Maybe connected to %s' % to_pid)
 
   def send(self, from_pid, to_pid, method, body=None):
@@ -195,7 +192,7 @@ class Context(threading.Thread):
     # short circuit for local processes
     if to_pid in self._processes:
       log.info('Doing local dispatch of %s => %s (method: %s)' % (
-           from_pid, to_pid, method))
+               from_pid, to_pid, method))
       self.dispatch(to_pid, method, from_pid, body or b'')
       return
     """
@@ -203,7 +200,7 @@ class Context(threading.Thread):
     request_data = encode_request(from_pid, to_pid, method, body=body)
 
     log.info('Sending POST %s => %s (payload: %d bytes)' % (
-         from_pid, to_pid.as_url(method), len(request_data)))
+             from_pid, to_pid.as_url(method), len(request_data)))
 
     def on_connect(stream):
       log.info('Writing %s from %s to %s' % (len(request_data), from_pid, to_pid))
