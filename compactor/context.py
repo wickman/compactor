@@ -61,6 +61,7 @@ class Context(threading.Thread):
           raise RuntimeError('Attempting to construct different singleton context.')
       else:
         cls._SINGLETON = cls(delegate=delegate, **kw)
+        cls._SINGLETON.start()
     return cls._SINGLETON
 
   def __init__(self, delegate="", loop=None):
