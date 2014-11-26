@@ -21,6 +21,7 @@ setup(
   install_requires=[
     'trollius',
     'tornado==4.1.dev1',
+    # 'tornado==4.0.0',
     'twitter.common.lang',
   ],
   extras_require={
