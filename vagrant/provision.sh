@@ -28,7 +28,7 @@ MESOS_VERSION=0.20.1
 function build_mesos {
   # wget -q -c http://downloads.mesosphere.io/master/ubuntu/12.04/mesos_${MESOS_VERSION}-1.0.ubuntu1204_amd64.deb
   # dpkg --install mesos_${MESOS_VERSION}-1.0.ubuntu1204_amd64.deb
-  
+
   git clone https://github.com/wickman/mesos mesos-fork
   pushd mesos-fork
     git checkout wickman/pong_example
@@ -61,6 +61,11 @@ function install_tox {
   pip install tox
 }
 
+function launch_pong {
+  LIBPROCESS_IP=192.168.33.2 LIBPROCESS_PORT=31337 ./pong &
+}
+
 install_ssh_config
 install_tox
 build_mesos
+launch_pong

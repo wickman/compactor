@@ -12,16 +12,17 @@ import pytest
 logging.basicConfig()
 
 
-@pytest.mark.skipif('os.getenv("MESOS_SLAVE_PID") is None')
-def test_slave_ping():
-  slave_pid = PID.from_string(os.getenv("MESOS_SLAVE_PID"))
+def test_ping():
+  ping_pid = PID.from_string('(1)@%s:%s' % (
+      os.getenv('PONGPROCESS_IP'),
+      os.getenv('PONGPROCESS_PORT')))
 
   class PongProcess(Process):
     def __init__(self, **kw):
       self.event = threading.Event()
       super(PongProcess, self).__init__('ponger', **kw)
 
-    @Process.route('/PONG')
+    @Process.install('/pong')
     def pong(self, handler):
       self.event.set()
 
@@ -30,7 +31,7 @@ def test_slave_ping():
 
   pong = PongProcess()
   pong_pid = context.spawn(pong)
-  context.send(pong_pid, slave_pid, 'PING')
+  context.send(pong_pid, ping_pid, 'ping')
 
   pong.event.wait(timeout=1.0)
   assert pong.event.is_set()

@@ -11,8 +11,9 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
   config.vm.define "testcluster" do |dev|
     dev.vm.network :private_network, ip: "192.168.33.2"
+    # dev.vm.network "forwarded_port", guest: 31337, host: 41337
     dev.vm.provider :virtualbox do |vb|
-      vb.customize ["modifyvm", :id, "--memory", "1024"]
+      vb.customize ["modifyvm", :id, "--memory", "1536"]
     end
     dev.vm.provision "shell", path:
     "vagrant/provision.sh"
