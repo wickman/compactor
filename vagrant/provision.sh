@@ -61,11 +61,6 @@ function install_tox {
   pip install tox
 }
 
-function launch_pong {
-  LIBPROCESS_IP=192.168.33.2 LIBPROCESS_PORT=31337 ./pong &
-}
-
 install_ssh_config
 install_tox
 build_mesos
-launch_pong
