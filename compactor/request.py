@@ -15,6 +15,9 @@ def encode_request(from_pid, to_pid, method, body=None, content_type=None, legac
   if body is None:
     body = b''
 
+  if not isinstance(body, (bytes, bytearray)):
+    raise TypeError('Body must be a sequence of bytes.')
+
   headers = [
     'POST /{process}/{method} HTTP/1.0'.format(process=to_pid.id, method=method),
     'Connection: Keep-Alive',
@@ -33,7 +36,7 @@ def encode_request(from_pid, to_pid, method, body=None, content_type=None, legac
 
   def iter_fragments():
     for fragment in headers:
-      yield fragment.encode('utf8')
+      yield fragment
       yield CRLF
     yield CRLF
     if body:

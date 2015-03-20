@@ -3,15 +3,24 @@ import threading
 from compactor.context import Context
 from compactor.process import ProtobufProcess
 
+import pytest
+
 try:
   import mock
 except ImportError:
   from unittest import mock
 
+try:
+  import google.protobuf
+  HAS_PROTOBUF=True
+except ImportError:
+  HAS_PROTOBUF=False
+
 import logging
 logging.basicConfig()
 
 
+@pytest.mark.skipif('not HAS_PROTOBUF')
 def test_protobuf_process():
   parameter = []
   event = threading.Event()
@@ -24,13 +33,13 @@ def test_protobuf_process():
 
   send_msg = mock.MagicMock()
   send_msg.SerializeToString = mock.MagicMock()
-  send_msg.SerializeToString.return_value = 'beepboop'
+  send_msg.SerializeToString.return_value = b'beepboop'
 
   class Pinger(ProtobufProcess):
     @ProtobufProcess.install(msg_init, endpoint='foo.bar.ping')
     def ping(self, from_pid, message):
       assert message == recv_msg
-      message.MergeFromString.assert_called_with('beepboop')
+      message.MergeFromString.assert_called_with(b'beepboop')
       event.set()
 
   class Ponger(ProtobufProcess):
@@ -57,6 +66,7 @@ def test_protobuf_process():
   context2.stop()
 
 
+@pytest.mark.skipif('not HAS_PROTOBUF')
 def test_protobuf_process_local_dispatch():
   parameter = []
   event = threading.Event()
@@ -69,13 +79,13 @@ def test_protobuf_process_local_dispatch():
 
   send_msg = mock.MagicMock()
   send_msg.SerializeToString = mock.MagicMock()
-  send_msg.SerializeToString.return_value = 'beepboop'
+  send_msg.SerializeToString.return_value = b'beepboop'
 
   class Pinger(ProtobufProcess):
     @ProtobufProcess.install(msg_init, endpoint='foo.bar.ping')
     def ping(self, from_pid, message):
       assert message == recv_msg
-      message.MergeFromString.assert_called_with('beepboop')
+      message.MergeFromString.assert_called_with(b'beepboop')
       event.set()
 
   class Ponger(ProtobufProcess):

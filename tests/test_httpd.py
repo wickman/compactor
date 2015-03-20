@@ -76,10 +76,10 @@ class ScatterThread(threading.Thread):
     scatter = ScatterProcess('scatter' + self.context.unique_suffix())
     self.context.spawn(scatter)
 
-    expected_acks = set('syn%d' % k for k in range(self.iterations))
+    expected_acks = set(('syn%d' % k).encode('utf8') for k in range(self.iterations))
 
     for k in range(self.iterations):
-      scatter.send(self.to_pid, 'syn', 'syn%d' % k)
+      scatter.send(self.to_pid, 'syn', ('syn%d' % k).encode('utf8'))
 
     while True:
       with scatter.condition:
@@ -226,12 +226,12 @@ class TestHttpd(EphemeralContextTestCase):
     pid2 = self.context.spawn(proc2)
 
     # ping with body
-    proc1.send(pid2, 'ping', 'with_body')
+    proc1.send(pid2, 'ping', b'with_body')
     proc1.pong_event.wait(timeout=1)
     assert proc1.pong_event.is_set()
     assert proc2.ping_event.is_set()
-    assert proc1.pong_body == 'with_body'
-    assert proc2.ping_body == 'with_body'
+    assert proc1.pong_body == b'with_body'
+    assert proc2.ping_body == b'with_body'
 
     proc1.pong_event.clear()
     proc2.ping_event.clear()
@@ -241,8 +241,8 @@ class TestHttpd(EphemeralContextTestCase):
     proc1.pong_event.wait(timeout=1)
     assert proc1.pong_event.is_set()
     assert proc2.ping_event.is_set()
-    assert proc1.pong_body == ''
-    assert proc2.ping_body == ''
+    assert proc1.pong_body == b''
+    assert proc2.ping_body == b''
 
   # Not sure why this doesn't work.
   @pytest.mark.xfail

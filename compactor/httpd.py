@@ -32,7 +32,8 @@ class WireProtocolMessageHandler(ProcessBaseHandler):
         return PID.from_string(headers['Libprocess-From']), False
       elif 'User-Agent' in headers and headers['User-Agent'].startswith('libprocess/'):
         return PID.from_string(headers['User-Agent'][len('libprocess/'):]), True
-    except ValueError:
+    except ValueError as e:
+      log.error('Failed to detect process: %r' % e)
       pass
 
     return None, None

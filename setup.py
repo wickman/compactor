@@ -1,7 +1,7 @@
 import os
 from setuptools import setup
 
-__version__ = '0.1.3'
+__version__ = '0.2.0-dev0'
 
 
 with open(os.path.join(os.path.dirname(__file__), 'CHANGES.rst')) as fp:
@@ -20,11 +20,11 @@ setup(
   packages=['compactor'],
   install_requires=[
     'trollius',
-    'tornado==4.1.dev1',
+    'tornado==4.1',
     'twitter.common.lang',
   ],
   extras_require={
-    'pb': ['protobuf'],
+    'pb': ['protobuf>=2.6.1,<2.7'],
   },
   zip_safe=True,
 )

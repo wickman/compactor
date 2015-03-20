@@ -33,28 +33,31 @@ class Context(threading.Thread):
   CONNECT_TIMEOUT_SECS = 5
 
   @classmethod
-  def make_socket(cls):
-    """Bind to a new socket. If LIBPROCESS_PORT or LIBPROCESS_IP are
-    configured in the environment, these will be used for socket
-    connectivity.
+  def make_socket(cls, ip, port):
+    """Bind to a new socket.
+
+    If LIBPROCESS_PORT or LIBPROCESS_IP are configured in the environment,
+    these will be used for socket connectivity.
     """
-
-    ip = os.environ.get("LIBPROCESS_IP", "0.0.0.0")
-    try:
-      port = int(os.environ.get("LIBPROCESS_PORT", 0))
-    except ValueError:
-      raise self.Error('Invalid LIBPROCESS_PORT provided')
-
     bound_socket = bind_sockets(port, address=ip)[0]
     ip, port = bound_socket.getsockname()
 
-    if not ip or ip == "0.0.0.0":
+    if not ip or ip == '0.0.0.0':
       ip = socket.gethostbyname(socket.gethostname())
 
     return bound_socket, ip, port
 
   @classmethod
-  def singleton(cls, delegate="", **kw):
+  def get_ip_port(cls, ip=None, port=None):
+    ip = ip or os.environ.get('LIBPROCESS_IP', '0.0.0.0')
+    try:
+      port = int(port or os.environ.get('LIBPROCESS_PORT', 0))
+    except ValueError:
+      raise self.Error('Invalid ip/port provided')
+    return ip, port
+
+  @classmethod
+  def singleton(cls, delegate='', **kw):
     with cls._LOCK:
       if cls._SINGLETON:
         if cls._SINGLETON.delegate != delegate:
@@ -64,7 +67,7 @@ class Context(threading.Thread):
         cls._SINGLETON.start()
     return cls._SINGLETON
 
-  def __init__(self, delegate="", loop=None):
+  def __init__(self, delegate='', loop=None, ip=None, port=None):
     self._processes = {}
     self._links = defaultdict(set)
     self.delegate = delegate
@@ -77,7 +80,8 @@ class Context(threading.Thread):
     self.loop = CustomIOLoop()
 
     self._ip = None
-    sock, self.ip, self.port = self.make_socket()
+    ip, port = self.get_ip_port(ip, port)
+    sock, self.ip, self.port = self.make_socket(ip, port)
     self.http = HTTPD(sock, self.loop)
 
     self._connections = {}
@@ -106,14 +110,14 @@ class Context(threading.Thread):
     self.loop.close()
 
   def stop(self):
-    log.debug("Stopping context")
+    log.debug('Stopping context')
 
     pids = list(self._processes)
 
     # Clean up the context
     for pid in pids:
       self.terminate(pid)
-    for connection in self._connections.values():
+    for connection in list(self._connections.values()):
       connection.close()
 
     self.loop.stop()
@@ -152,6 +156,7 @@ class Context(threading.Thread):
     def streaming_callback(data):
       # we are not guaranteed to get an acknowledgment, but log and discard bytes if we do.
       log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
+      log.debug('  data: %r' % (data,))
 
     def on_connect(exit_cb, stream):
       log.info('Connection to %s established' % to_pid)
@@ -168,7 +173,7 @@ class Context(threading.Thread):
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     if not sock:
-      raise self.SocketError("Failed opening socket")
+      raise self.SocketError('Failed opening socket')
 
     # Set the socket non-blocking
     sock.setblocking(0)
@@ -182,7 +187,7 @@ class Context(threading.Thread):
     log.info('Establishing connection to %s' % to_pid)
     stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
     if stream.closed():
-      raise self.SocketError("Failed to initiate stream connection")
+      raise self.SocketError('Failed to initiate stream connection')
     log.info('Maybe connected to %s' % to_pid)
 
   def send(self, from_pid, to_pid, method, body=None):
