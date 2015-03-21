@@ -2,9 +2,9 @@
 CHANGES
 =======
 
-----------
-0.2.0-dev0
-----------
+-----
+0.2.0
+-----
 
 * Adds vagrant-based integration test to test compactor against reference libprocess.
 
