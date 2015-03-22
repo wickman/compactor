@@ -1,3 +1,5 @@
+import functools
+
 from .context import Context
 from .pid import PID
 
@@ -117,28 +119,16 @@ class Process(object):
 
 
 class ProtobufProcess(Process):
-  MESSAGE_TYPE_ATTRIBUTE = '__pb_msgtype__'
-
   @classmethod
-  def install(cls, message_type, endpoint=None):
-    endpoint = endpoint or message_type.DESCRIPTOR.full_name
-
+  def install(cls, message_type):
     def wrap(fn):
-      setattr(fn, cls.MESSAGE_TYPE_ATTRIBUTE, message_type)
-      return Process.install(endpoint)(fn)
-
+      @functools.wraps(fn)
+      def wrapped_fn(self, from_pid, message_str):
+        message = message_type()
+        message.MergeFromString(message_str)
+        return fn(self, from_pid, message)
+      return Process.install(message_type.DESCRIPTOR.full_name)(wrapped_fn)
     return wrap
 
-  def send(self, to, message, method_name=None):
-    super(ProtobufProcess, self).send(
-      to,
-      method_name or message.DESCRIPTOR.full_name,
-      message.SerializeToString()
-    )
-
-  def handle_message(self, name, from_pid, body):
-    handler = self._message_handlers[name]
-    message_type = getattr(handler, self.MESSAGE_TYPE_ATTRIBUTE)
-    message = message_type()
-    message.MergeFromString(body)
-    super(ProtobufProcess, self).handle_message(name, from_pid, message)
+  def send(self, to, message):
+    super(ProtobufProcess, self).send(to, message.DESCRIPTOR.full_name, message.SerializeToString())

@@ -92,7 +92,7 @@ class Context(threading.Thread):
     self.__id = 1
 
   def is_local(self, pid):
-    return self.ip == pid.ip and self.port == pid.port
+    return pid in self._processes
 
   def assert_local_pid(self, pid):
     if not self.is_local(pid):
@@ -117,8 +117,12 @@ class Context(threading.Thread):
     # Clean up the context
     for pid in pids:
       self.terminate(pid)
-    for connection in list(self._connections.values()):
-      connection.close()
+
+    while self._connections:
+      pid = next(iter(self._connections))
+      conn = self._connections.pop(pid, None)
+      if conn:
+        conn.close()
 
     self.loop.stop()
 
@@ -129,23 +133,22 @@ class Context(threading.Thread):
     self._processes[process.pid] = process
     return process.pid
 
-  def _get_function(self, pid, method):
+  def _get_dispatch_method(self, pid, method):
     try:
-      for mailbox, callable in self._processes[pid].iter_handlers():
-        if method == mailbox:
-          return callable
+      return getattr(self._processes[pid], method)
     except KeyError:
       raise self.InvalidProcess('Unknown process %s' % pid)
-    raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
+    except AttributeError:
+      raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
 
   def dispatch(self, pid, method, *args):
     self.assert_local_pid(pid)
-    function = self._get_function(pid, method)
+    function = self._get_dispatch_method(pid, method)
     self.loop.add_callback(function, *args)
 
   def delay(self, amount, pid, method, *args):
     self.assert_local_pid(pid)
-    function = self._get_function(pid, method)
+    function = self._get_dispatch_method(pid, method)
     self.loop.add_timeout(self.loop.time() + amount, function, *args)
 
   def maybe_connect(self, to_pid, callback=None):
@@ -162,8 +165,10 @@ class Context(threading.Thread):
       log.info('Connection to %s established' % to_pid)
       self._connections[to_pid] = stream
       callback(stream)
-      self.loop.add_callback(stream.read_until_close, exit_cb,
-                             streaming_callback=streaming_callback)
+      self.loop.add_callback(
+          stream.read_until_close,
+          exit_cb,
+          streaming_callback=streaming_callback)
 
     stream = self._connections.get(to_pid)
 
@@ -190,18 +195,24 @@ class Context(threading.Thread):
       raise self.SocketError('Failed to initiate stream connection')
     log.info('Maybe connected to %s' % to_pid)
 
+  def _get_local_mailbox(self, pid, method):
+    for mailbox, callable in self._processes[pid].iter_handlers():
+      if method == mailbox:
+        return callable
+
   def send(self, from_pid, to_pid, method, body=None):
     """Send a message method from_pid to_pid with body (optional)"""
 
-    # TODO(wickman) Restore local short-circuiting.
-    """
-    # short circuit for local processes
-    if to_pid in self._processes:
-      log.info('Doing local dispatch of %s => %s (method: %s)' % (
-               from_pid, to_pid, method))
-      self.dispatch(to_pid, method, from_pid, body or b'')
-      return
-    """
+    if self.is_local(to_pid):
+      local_method = self._get_local_mailbox(to_pid, method)
+      if local_method:
+        log.info('Doing local dispatch of %s => %s (method: %s)' % (from_pid, to_pid, local_method))
+        self.loop.add_callback(local_method, from_pid, body or b'')
+        return
+      else:
+        # TODO(wickman) Consider failing hard if no local method is detected, otherwise we're
+        # just going to do a POST and have it dropped on the floor.
+        pass
 
     request_data = encode_request(from_pid, to_pid, method, body=body)
 
@@ -220,7 +231,9 @@ class Context(threading.Thread):
       try:
         links.remove(to_pid)
         self._processes[pid].exited(to_pid)
-      except KeyError:
+        log.debug('%s:exited(%s)' % (pid, to_pid))
+      except KeyError as e:
+        log.debug('No link from %s:%s' % (pid, to_pid))
         continue
 
   def __on_exit(self, to_pid, body):

@@ -3,6 +3,16 @@ CHANGES
 =======
 
 -----
+0.2.1
+-----
+
+* Restores local dispatch so that you do not need to install methods intended for local
+  dispatching only.
+
+* Fixes a race condition on ``Context.stop`` that could cause the event loop to raise an
+  uncaught exception on teardown.
+
+-----
 0.2.0
 -----
 

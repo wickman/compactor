@@ -11,7 +11,7 @@ except ImportError:
   from unittest import mock
 
 try:
-  import google.protobuf
+  from google.protobuf import descriptor_pb2
   HAS_PROTOBUF=True
 except ImportError:
   HAS_PROTOBUF=False
@@ -20,88 +20,61 @@ import logging
 logging.basicConfig()
 
 
-@pytest.mark.skipif('not HAS_PROTOBUF')
-def test_protobuf_process():
-  parameter = []
+# Send from one to another, swap out contexts to test local vs remote dispatch.
+def ping_pong(context1, context2):
+  ping_calls = []
   event = threading.Event()
 
-  recv_msg = mock.MagicMock()
-  recv_msg.MergeFromString = mock.MagicMock()
-
-  def msg_init():
-    return recv_msg
-
-  send_msg = mock.MagicMock()
-  send_msg.SerializeToString = mock.MagicMock()
-  send_msg.SerializeToString.return_value = b'beepboop'
-
   class Pinger(ProtobufProcess):
-    @ProtobufProcess.install(msg_init, endpoint='foo.bar.ping')
+    @ProtobufProcess.install(descriptor_pb2.DescriptorProto)
     def ping(self, from_pid, message):
-      assert message == recv_msg
-      message.MergeFromString.assert_called_with(b'beepboop')
+      ping_calls.append((from_pid, message))
       event.set()
 
   class Ponger(ProtobufProcess):
     pass
 
-  context = Context()
-  context.start()
   pinger = Pinger('pinger')
-  ping_pid = context.spawn(pinger)
-
-  context2 = Context()
-  context2.start()
   ponger = Ponger('ponger')
+
+  ping_pid = context1.spawn(pinger)
   pong_pid = context2.spawn(ponger)
 
-  # TODO(wickman) this doesn't actually work for local processes, hence
-  # spawning two separate contexts.
-  ponger.send(ping_pid, send_msg, method_name='foo.bar.ping')
+  send_msg = descriptor_pb2.DescriptorProto()
+  send_msg.name = 'ping'
+
+  ponger.send(ping_pid, send_msg)
 
   event.wait(timeout=1)
   assert event.is_set()
+  assert len(ping_calls) == 1
+  from_pid, message = ping_calls[0]
+  assert from_pid == pong_pid
+  assert message == send_msg
 
-  context.stop()
-  context2.stop()
+
+@pytest.mark.skipif('not HAS_PROTOBUF')
+def test_protobuf_process_remote_dispatch():
+  context1 = Context()
+  context1.start()
+
+  context2 = Context()
+  context2.start()
+
+  try:
+    ping_pong(context1, context2)
+  finally:
+    context1.stop()
+    context2.stop()
 
 
 @pytest.mark.skipif('not HAS_PROTOBUF')
 def test_protobuf_process_local_dispatch():
-  parameter = []
-  event = threading.Event()
-
-  recv_msg = mock.MagicMock()
-  recv_msg.MergeFromString = mock.MagicMock()
-
-  def msg_init():
-    return recv_msg
-
-  send_msg = mock.MagicMock()
-  send_msg.SerializeToString = mock.MagicMock()
-  send_msg.SerializeToString.return_value = b'beepboop'
-
-  class Pinger(ProtobufProcess):
-    @ProtobufProcess.install(msg_init, endpoint='foo.bar.ping')
-    def ping(self, from_pid, message):
-      assert message == recv_msg
-      message.MergeFromString.assert_called_with(b'beepboop')
-      event.set()
-
-  class Ponger(ProtobufProcess):
-    pass
-
   context = Context()
   context.start()
 
-  pinger = Pinger('pinger')
-  ping_pid = context.spawn(pinger)
-  ponger = Ponger('ponger')
-  pong_pid = context.spawn(ponger)
+  try:
+    ping_pong(context, context)
+  finally:
+    context.stop()
 
-  ponger.send(ping_pid, send_msg, method_name='foo.bar.ping')
-
-  event.wait(timeout=1)
-  assert event.is_set()
-
-  context.stop()
