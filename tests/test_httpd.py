@@ -103,7 +103,7 @@ def startjoin(context, scatters):
 
 
 def test_multi_thread_multi_scatter():
-  with ephemeral_context() as context:
+  with ephemeral_context(ip=LOOPBACK) as context:
     gather = GatherProcess()
     context.spawn(gather)
     scatters = [ScatterThread(gather.pid, 3, Context(ip=LOOPBACK)) for k in range(5)]
@@ -117,7 +117,7 @@ def test_multi_thread_multi_scatter():
 
 
 def test_single_thread_multi_scatter():
-  with ephemeral_context() as context:
+  with ephemeral_context(ip=LOOPBACK) as context:
     gather = GatherProcess()
     context.spawn(gather)
     scatters = [ScatterThread(gather.pid, 3, context) for k in range(5)]

@@ -8,8 +8,10 @@ log = logging.getLogger(__name__)
 
 
 class EphemeralContextTestCase(unittest.TestCase):
+  LOOPBACK = '127.0.0.1'
+  
   def setUp(self):
-    self.context = Context()
+    self.context = Context(ip=self.LOOPBACK)
     log.debug('XXX Starting context')
     self.context.start()
 
