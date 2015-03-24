@@ -7,3 +7,4 @@
 /htmlcov
 /.tox
 /.vagrant
+/docs/_build
