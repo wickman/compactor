@@ -13,6 +13,9 @@ CHANGES
   result in races whereby you'd receive calls from remote processes before ``initialize`` exited,
   causing flaky behavior especially in tests.
 
+* Ensure that ``send`` and ``link`` take place on the event loop to prevent known non-threadsafe
+  conditions on connection establishment.
+
 -----
 0.2.1
 -----
