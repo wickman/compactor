@@ -8,6 +8,7 @@ from compactor.process import Process
 import logging
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
+LOOPBACK = '127.0.0.1'
 
 
 def test_simple_process():
@@ -23,7 +24,7 @@ def test_simple_process():
       parameter.append(value)
       event.set()
 
-  context = Context()
+  context = Context(ip=LOOPBACK)
   context.start()
 
   derp = DerpProcess()
@@ -41,10 +42,10 @@ MAX_TIMEOUT = 10
 
 
 def test_link_race_condition():
-  context1 = Context()
+  context1 = Context(ip=LOOPBACK)
   context1.start()
 
-  context2 = Context()
+  context2 = Context(ip=LOOPBACK)
   context2.start()
 
   class Leader(Process):

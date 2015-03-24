@@ -11,6 +11,7 @@ from tornado import gen
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
+LOOPBACK = '127.0.0.1'
 
 
 class PingPongProcess(Process):
@@ -105,7 +106,7 @@ def test_multi_thread_multi_scatter():
   with ephemeral_context() as context:
     gather = GatherProcess()
     context.spawn(gather)
-    scatters = [ScatterThread(gather.pid, 3, Context()) for k in range(5)]
+    scatters = [ScatterThread(gather.pid, 3, Context(ip=LOOPBACK)) for k in range(5)]
     for scatter in scatters:
       scatter.context.start()
     try:
@@ -245,7 +246,7 @@ class TestHttpd(EphemeralContextTestCase):
   # Not sure why this doesn't work.
   @pytest.mark.xfail
   def test_link_exit_remote(self):
-    parent_context = Context()
+    parent_context = Context(ip=LOOPBACK)
     parent_context.start()
     parent = ParentProcess()
     parent_context.spawn(parent)
