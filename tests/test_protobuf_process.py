@@ -13,7 +13,6 @@ except ImportError:
 
 import logging
 logging.basicConfig()
-LOOPBACK = '127.0.0.1'
 
 
 # Send from one to another, swap out contexts to test local vs remote dispatch.
@@ -51,10 +50,10 @@ def ping_pong(context1, context2):
 
 @pytest.mark.skipif('not HAS_PROTOBUF')
 def test_protobuf_process_remote_dispatch():
-  context1 = Context(ip=LOOPBACK)
+  context1 = Context()
   context1.start()
 
-  context2 = Context(ip=LOOPBACK)
+  context2 = Context()
   context2.start()
 
   try:
@@ -66,7 +65,7 @@ def test_protobuf_process_remote_dispatch():
 
 @pytest.mark.skipif('not HAS_PROTOBUF')
 def test_protobuf_process_local_dispatch():
-  context = Context(ip=LOOPBACK)
+  context = Context()
   context.start()
 
   try:
