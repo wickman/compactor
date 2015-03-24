@@ -217,12 +217,11 @@ class Context(threading.Thread):
     if not sock:
       raise self.SocketError('Failed opening socket')
 
-    # Set the socket non-blocking
-    sock.setblocking(0)
-
     stream = IOStream(sock, io_loop=self.__loop)
     stream.set_nodelay(True)
     stream.set_close_callback(partial(self.__on_exit, to_pid, b'reached end of stream'))
+    
+    log.debug('stream.closed() = %s' % stream.closed())
 
     connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
 
