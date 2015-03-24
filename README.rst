@@ -103,7 +103,7 @@ leader/follower pattern
 
 with this, you can create two separate contexts:
 
-.. code-block::
+.. code-block:: python
 
     from compactor import Context
 
@@ -127,3 +127,24 @@ pattern building distributed systems using the actor model.
 
 the ``link`` method links the two processes together.  should the connection be severed,
 the ``exited`` method on the process will be called.
+
+protocol buffer processes
+=========================
+
+mesos uses protocol buffers over the wire to support RPC.  compactor supports this natively.
+simply subclass ``ProtobufProcess`` instead and use ``ProtobufProcess.install``
+
+.. code-block:: python
+
+    from compactor.process import ProtobufProcess
+    from foo_pb2 import ServiceRequestMessage, ServiceResponseMessage
+
+    class Service(ProtobufProcess):
+      @ProtobufProcess.install(ServiceRequestMessage)
+      def request(self, from_pid, message):
+        # message is a deserialized protobuf ServiceRequestMessage
+        response = ServiceResponseMessage(...)
+        # self.send automatically serializes the response, a protocol buffer, over the wire.
+        self.send(from_pid, response)
+
+
