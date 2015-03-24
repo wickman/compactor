@@ -159,7 +159,7 @@ class Context(threading.Thread):
     for callback in callbacks:
       log.debug('Dispatching connection callback %s for %s:%s -> %s' % (
           callback, self.ip, self.port, to_pid))
-      callback(stream)
+      self.loop.add_callback(callback, stream)
 
   def maybe_connect(self, to_pid, callback=None):
     """Synchronously open a connection to to_pid or return a connection if it exists."""
@@ -194,7 +194,7 @@ class Context(threading.Thread):
           create = True
 
     if stream:
-      callback(stream)
+      self.loop.add_callback(callback, stream)
       return
 
     if not create:
