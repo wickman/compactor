@@ -15,10 +15,11 @@ this makes them remotely callable.
 
 .. code-block:: python
 
-    import compactor
     import threading
 
-    class PingProcess(compactor.Process):
+    from compactor import install, spawn, Process
+
+    class PingProcess(Process):
       def initialize(self):
         self.pinged = threading.Event()
 
@@ -30,15 +31,17 @@ this makes them remotely callable.
     ping_process = PingProcess('ping_process')
 
     # spawn the process, binding it to the current global context
-    compactor.spawn(ping_process)
+    spawn(ping_process)
 
     # send a message to the process
-    compactor.send(ping_process.pid, 'ping')
+    client = Process('client')
+    spawn(client)
+    client.send(ping_process.pid, 'ping')
 
     # ensure the message was delivered
     ping_process.pinged.wait()
 
-each context is, in essence, a listening ``(ip, port)`` pair.
+each context is, in essence, a listening (ip, port) pair.
 
 by default there is a global, singleton context.  use ``compactor.spawn`` to
 spawn a process on it.  by default it will bind to ``0.0.0.0`` on an
@@ -47,22 +50,20 @@ arbitrary port.  this can be overridden using the ``LIBPROCESS_IP`` and
 
 alternately, you can create an instance of a ``compactor.Context``,
 explicitly passing it ``port=`` and ``ip=`` keywords.  you can then call the
-``spawn`` method on it.
+``spawn`` method on it to bind processes.
 
 spawning a process does two things: it binds the process to the context,
 creating a pid, and initializes the process.  the pid is a unique identifier
-used for routing purposes.  in practice, it consists of an ``(ip, port,
-name)`` tuple, where the ip and port are those of the context.
+used for routing purposes.  in practice, it consists of an (ip, port, name)
+tuple, where the ip and port are those of the context, and the name is the
+name of the process.
 
 when a process is spawned, its ``initialize`` method is called.  this can be
 used to initialize state or initiate connections to other services, as
 illustrated in the following example.
 
-example
-=======
-
-leader/follower registration pattern
-------------------------------------
+leader/follower pattern
+=======================
 
 .. code-block:: python
 
@@ -112,7 +113,8 @@ with this, you can create two separate contexts:
 
     # at this point, leader_context.pid is a unique identifier for this leader process
     # and can be disseminated via service discovery or passed explicitly to other services,
-    # e.g. 'leader@192.168.33.2:5051'.
+    # e.g. 'leader@192.168.33.2:5051'.  the follower can be spawned in the same process,
+    # in a separate process, or on a separate machine.
 
     follower_context = Context()
     follower = Follower('follower1', leader_context.pid)
