@@ -6,7 +6,6 @@ compactor
 compactor is a pure python implementation of libprocess, the actor library
 underpinning `mesos <https://mesos.apache.org>`_.
 
-
 usage
 =====
 
@@ -14,7 +13,56 @@ implementing a process is a matter of subclassing ``compactor.Process``.
 you can "install" methods on processes using the ``install`` decorator.
 this makes them remotely callable.
 
-an example leader, follower pattern:
+.. code-block:: python
+
+    import compactor
+    import threading
+
+    class PingProcess(compactor.Process):
+      def initialize(self):
+        self.pinged = threading.Event()
+
+      @install('ping')
+      def ping(self, from_pid, body):
+        self.pinged.set()
+
+    # construct the process
+    ping_process = PingProcess('ping_process')
+
+    # spawn the process, binding it to the current global context
+    compactor.spawn(ping_process)
+
+    # send a message to the process
+    compactor.send(ping_process.pid, 'ping')
+
+    # ensure the message was delivered
+    ping_process.pinged.wait()
+
+each context is, in essence, a listening ``(ip, port)`` pair.
+
+by default there is a global, singleton context.  use ``compactor.spawn`` to
+spawn a process on it.  by default it will bind to ``0.0.0.0`` on an
+arbitrary port.  this can be overridden using the ``LIBPROCESS_IP`` and
+``LIBPROCESS_PORT`` environment variables.
+
+alternately, you can create an instance of a ``compactor.Context``,
+explicitly passing it ``port=`` and ``ip=`` keywords.  you can then call the
+``spawn`` method on it.
+
+spawning a process does two things: it binds the process to the context,
+creating a pid, and initializes the process.  the pid is a unique identifier
+used for routing purposes.  in practice, it consists of an ``(ip, port,
+name)`` tuple, where the ip and port are those of the context.
+
+when a process is spawned, its ``initialize`` method is called.  this can be
+used to initialize state or initiate connections to other services, as
+illustrated in the following example.
+
+example
+=======
+
+leader/follower registration pattern
+------------------------------------
 
 .. code-block:: python
 
@@ -43,35 +91,37 @@ an example leader, follower pattern:
         super(Follower, self).initialize()
         self.send(self.leader_pid, 'register', self.uuid)
 
+      def exited(self, from_pid):
+        self.registered.clear()
+
       @install('registered')
       def registered(self, from_pid, uuid):
         if uuid == self.uuid:
           self.link(from_pid)
           self.registered.set()
 
-
-by default there is a global, singleton context.  use ``compactor.spawn`` to
-spawn a process on it.  alternately, you can create an instance of a
-``compactor.Context`` and call the ``spawn`` method on it.
-
-spawning a process does two things: it creates a pid and initializes the
-process.  the pid is a unique identifier used for routing purposes.  in
-practice, it consists of an ``(ip, port, name)`` tuple.
-
-when a process is spawned, its ``initialize`` method is called.  this can be
-used to initialize state or initiate connections to other services, as
-illustrated above in the leader/follower example.
+with this, you can create two separate contexts:
 
 .. code-block::
 
-    import compactor
+    from compactor import Context
 
+    leader_context = Context(port=5051)
     leader = Leader()
-    compactor.spawn(leader)
+    leader_context.spawn(leader)
 
-    follower = Follower('follower1', leader.pid)
-    compactor.spawn(follower)
+    # at this point, leader_context.pid is a unique identifier for this leader process
+    # and can be disseminated via service discovery or passed explicitly to other services,
+    # e.g. 'leader@192.168.33.2:5051'.
+
+    follower_context = Context()
+    follower = Follower('follower1', leader_context.pid)
+    follower_context.spawn(follower)
 
     follower.registered.wait()
 
-this effectively initiates a handshake between the leader and follower processes.
+this effectively initiates a handshake between the leader and follower processes, a common
+pattern building distributed systems using the actor model.
+
+the ``link`` method links the two processes together.  should the connection be severed,
+the ``exited`` method on the process will be called.
