@@ -71,27 +71,43 @@ class Context(threading.Thread):
     self._processes = {}
     self._links = defaultdict(set)
     self.delegate = delegate
-    loop = loop or asyncio.new_event_loop()
+    self.__loop = self.http = None
+    self.__event_loop = loop
+    self._ip = None
+    ip, port = self.get_ip_port(ip, port)
+    self.__sock, self.ip, self.port = self.make_socket(ip, port)
+    self._connections = {}
+    self._connection_callbacks = defaultdict(list)
+    self._connection_callbacks_lock = threading.Lock()
+    super(Context, self).__init__()
+    self.daemon = True
+    self.lock = threading.Lock()
+    self.__id = 1
+    self.__loop_started = threading.Event()
+
+  def assert_started(self):
+    assert self.__loop_started.is_set()
+
+  def start(self):
+    super(Context, self).start()
+    self.__loop_started.wait()
+
+  def run(self):
+    # Start the loop for this context, this is a blocking call and will
+    # keep the thread alive.
+    loop = self.__event_loop or asyncio.new_event_loop()
 
     class CustomIOLoop(BaseAsyncIOLoop):
       def initialize(self):
         super(CustomIOLoop, self).initialize(loop, close_loop=False)
 
-    self.loop = CustomIOLoop()
+    self.__loop = CustomIOLoop()
+    self.http = HTTPD(self.__sock, self.__loop)
 
-    self._ip = None
-    ip, port = self.get_ip_port(ip, port)
-    sock, self.ip, self.port = self.make_socket(ip, port)
-    self.http = HTTPD(sock, self.loop)
+    self.__loop_started.set()
 
-    self._connections = {}
-    self._connection_callbacks = defaultdict(list)
-    self._connection_callbacks_lock = threading.Lock()
-
-    super(Context, self).__init__()
-    self.daemon = True
-    self.lock = threading.Lock()
-    self.__id = 1
+    self.__loop.start()
+    self.__loop.close()
 
   def is_local(self, pid):
     return pid in self._processes
@@ -104,12 +120,6 @@ class Context(threading.Thread):
     with self.lock:
       suffix, self.__id = '(%d)' % self.__id, self.__id + 1
       return suffix
-
-  def run(self):
-    # Start the loop for this context, this is a blocking call and will
-    # keep the thread alive.
-    self.loop.start()
-    self.loop.close()
 
   def stop(self):
     log.debug('Stopping context')
@@ -126,9 +136,10 @@ class Context(threading.Thread):
       if conn:
         conn.close()
 
-    self.loop.stop()
+    self.__loop.stop()
 
   def spawn(self, process):
+    self.assert_started()
     process.bind(self)
     self.http.mount_process(process)
     self._processes[process.pid] = process
@@ -144,14 +155,16 @@ class Context(threading.Thread):
       raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
 
   def dispatch(self, pid, method, *args):
+    self.assert_started()
     self.assert_local_pid(pid)
     function = self._get_dispatch_method(pid, method)
-    self.loop.add_callback(function, *args)
+    self.__loop.add_callback(function, *args)
 
   def delay(self, amount, pid, method, *args):
+    self.assert_started()
     self.assert_local_pid(pid)
     function = self._get_dispatch_method(pid, method)
-    self.loop.add_timeout(self.loop.time() + amount, function, *args)
+    self.__loop.add_timeout(self.__loop.time() + amount, function, *args)
 
   def __dispatch_on_connect_callbacks(self, to_pid, stream):
     with self._connection_callbacks_lock:
@@ -159,7 +172,7 @@ class Context(threading.Thread):
     for callback in callbacks:
       log.debug('Dispatching connection callback %s for %s:%s -> %s' % (
           callback, self.ip, self.port, to_pid))
-      self.loop.add_callback(callback, stream)
+      self.__loop.add_callback(callback, stream)
 
   def maybe_connect(self, to_pid, callback=None):
     """Synchronously open a connection to to_pid or return a connection if it exists."""
@@ -176,7 +189,7 @@ class Context(threading.Thread):
       with self._connection_callbacks_lock:
         self._connections[to_pid] = stream
       self.__dispatch_on_connect_callbacks(to_pid, stream)
-      self.loop.add_callback(
+      self.__loop.add_callback(
           stream.read_until_close,
           exit_cb,
           streaming_callback=streaming_callback)
@@ -194,7 +207,7 @@ class Context(threading.Thread):
           create = True
 
     if stream:
-      self.loop.add_callback(callback, stream)
+      self.__loop.add_callback(callback, stream)
       return
 
     if not create:
@@ -207,7 +220,7 @@ class Context(threading.Thread):
     # Set the socket non-blocking
     sock.setblocking(0)
 
-    stream = IOStream(sock, io_loop=self.loop)
+    stream = IOStream(sock, io_loop=self.__loop)
     stream.set_nodelay(True)
     stream.set_close_callback(partial(self.__on_exit, to_pid, b'reached end of stream'))
 
@@ -230,11 +243,13 @@ class Context(threading.Thread):
   def send(self, from_pid, to_pid, method, body=None):
     """Send a message method from_pid to_pid with body (optional)"""
 
+    self.assert_started()
+
     if self.is_local(to_pid):
       local_method = self._get_local_mailbox(to_pid, method)
       if local_method:
         log.info('Doing local dispatch of %s => %s (method: %s)' % (from_pid, to_pid, local_method))
-        self.loop.add_callback(local_method, from_pid, body or b'')
+        self.__loop.add_callback(local_method, from_pid, body or b'')
         return
       else:
         # TODO(wickman) Consider failing hard if no local method is detected, otherwise we're
@@ -270,6 +285,8 @@ class Context(threading.Thread):
     self.__erase_link(to_pid)
 
   def link(self, pid, to):
+    self.assert_started()
+
     def really_link():
       self._links[pid].add(to)
       log.info('Added link from %s to %s' % (pid, to))
@@ -283,6 +300,8 @@ class Context(threading.Thread):
       self.maybe_connect(to, on_connect)
 
   def terminate(self, pid):
+    self.assert_started()
+
     log.info('Terminating %s' % pid)
     process = self._processes.pop(pid, None)
     if process:
