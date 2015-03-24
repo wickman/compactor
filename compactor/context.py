@@ -79,7 +79,8 @@ class Context(threading.Thread):
     self._connections = {}
     self._connection_callbacks = defaultdict(list)
     self._connection_callbacks_lock = threading.Lock()
-    super(Context, self).__init__()
+    self.__context_name = 'CompactorContext(%s:%d)' % (self.ip, self.port)
+    super(Context, self).__init__(name=self.__context_name)
     self.daemon = True
     self.lock = threading.Lock()
     self.__id = 1
@@ -91,6 +92,9 @@ class Context(threading.Thread):
   def start(self):
     super(Context, self).start()
     self.__loop_started.wait()
+
+  def __debug(self, msg):
+    log.debug('%s: %s' % (self.__context_name, msg))
 
   def run(self):
     # Start the loop for this context, this is a blocking call and will
@@ -122,7 +126,7 @@ class Context(threading.Thread):
       return suffix
 
   def stop(self):
-    log.debug('Stopping context')
+    self.__debug('Stopping context')
 
     pids = list(self._processes)
 
@@ -170,7 +174,7 @@ class Context(threading.Thread):
     with self._connection_callbacks_lock:
       callbacks = self._connection_callbacks.pop(to_pid, [])
     for callback in callbacks:
-      log.debug('Dispatching connection callback %s for %s:%s -> %s' % (
+      self.__debug('Dispatching connection callback %s for %s:%s -> %s' % (
           callback, self.ip, self.port, to_pid))
       self.__loop.add_callback(callback, stream)
 
@@ -182,7 +186,7 @@ class Context(threading.Thread):
     def streaming_callback(data):
       # we are not guaranteed to get an acknowledgment, but log and discard bytes if we do.
       log.info('Received %d bytes from %s, discarding.' % (len(data), to_pid))
-      log.debug('  data: %r' % (data,))
+      self.__debug('  data: %r' % (data,))
 
     def on_connect(exit_cb, stream):
       log.info('Connection to %s established' % to_pid)
@@ -200,7 +204,7 @@ class Context(threading.Thread):
       callbacks = self._connection_callbacks.get(to_pid)
 
       if not stream:
-        log.debug('Enqueueing connection callback for %s:%s -> %s' % (self.ip, self.port, to_pid))
+        self.__debug('Enqueueing connection callback for %s:%s -> %s' % (self.ip, self.port, to_pid))
         self._connection_callbacks[to_pid].append(callback)
 
         if not callbacks:
@@ -221,7 +225,7 @@ class Context(threading.Thread):
     stream.set_nodelay(True)
     stream.set_close_callback(partial(self.__on_exit, to_pid, b'reached end of stream'))
     
-    log.debug('stream.closed() = %s' % stream.closed())
+    self.__debug('stream.closed() = %s' % stream.closed())
 
     connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
 
@@ -271,7 +275,7 @@ class Context(threading.Thread):
     for pid, links in self._links.items():
       try:
         links.remove(to_pid)
-        log.debug('PID link from %s <- %s exited.' % (pid, to_pid))
+        self.__debug('PID link from %s <- %s exited.' % (pid, to_pid))
         self._processes[pid].exited(to_pid)
       except KeyError:
         continue
