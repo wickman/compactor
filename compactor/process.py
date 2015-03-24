@@ -34,13 +34,29 @@ class Process(object):
   def __init__(self, name):
     self.name = name
     self._delegates = {}
-    self._http_handlers = {}
-    self._message_handlers = {}
+    self._http_handlers = dict(self.iter_routes())
+    self._message_handlers = dict(self.iter_handlers())
     self._context = None
 
+  def __iter_callables(self):
+    # iterate over the methods in a way where we can differentiate methods from descriptors
+    for method in type(self).__dict__.values():
+      if callable(method):
+        # 'method' is the unbound method on the class -- we want to return the bound instancemethod
+        yield getattr(self, method.__name__)
+
+  def iter_routes(self):
+    for function in self.__iter_callables():
+      if hasattr(function, self.ROUTE_ATTRIBUTE):
+        yield getattr(function, self.ROUTE_ATTRIBUTE), function
+
+  def iter_handlers(self):
+    for function in self.__iter_callables():
+      if hasattr(function, self.INSTALL_ATTRIBUTE):
+        yield getattr(function, self.INSTALL_ATTRIBUTE), function
+
   def initialize(self):
-    self._http_handlers.update(self.iter_routes())
-    self._message_handlers.update(self.iter_handlers())
+    pass
 
   def _assert_bound(self):
     if not self._context:
@@ -68,23 +84,6 @@ class Process(object):
   @property
   def message_names(self):
     return self._message_handlers.keys()
-
-  def iter_callables(self):
-    for attribute_name in dir(self):
-      attribute = getattr(self, attribute_name)
-      if not callable(attribute):
-        continue
-      yield attribute
-
-  def iter_routes(self):
-    for function in self.iter_callables():
-      if hasattr(function, self.ROUTE_ATTRIBUTE):
-        yield getattr(function, self.ROUTE_ATTRIBUTE), function
-
-  def iter_handlers(self):
-    for function in self.iter_callables():
-      if hasattr(function, self.INSTALL_ATTRIBUTE):
-        yield getattr(function, self.INSTALL_ATTRIBUTE), function
 
   def delegate(self, name, pid):
     self._delegates[name] = pid

@@ -6,15 +6,10 @@ from compactor.process import ProtobufProcess
 import pytest
 
 try:
-  import mock
-except ImportError:
-  from unittest import mock
-
-try:
   from google.protobuf import descriptor_pb2
-  HAS_PROTOBUF=True
+  HAS_PROTOBUF = True
 except ImportError:
-  HAS_PROTOBUF=False
+  HAS_PROTOBUF = False
 
 import logging
 logging.basicConfig()
@@ -77,4 +72,3 @@ def test_protobuf_process_local_dispatch():
     ping_pong(context, context)
   finally:
     context.stop()
-

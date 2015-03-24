@@ -1,8 +1,6 @@
 import logging
 import threading
-import time
 
-import compactor
 from compactor.context import Context
 from compactor.process import Process
 from compactor.testing import ephemeral_context, EphemeralContextTestCase
@@ -222,7 +220,7 @@ class TestHttpd(EphemeralContextTestCase):
 
     proc1 = PingPongProcess('proc1')
     proc2 = PingPongProcess('proc2')
-    pid1 = self.context.spawn(proc1)
+    self.context.spawn(proc1)
     pid2 = self.context.spawn(proc2)
 
     # ping with body

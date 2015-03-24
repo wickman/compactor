@@ -3,9 +3,9 @@ import socket
 import threading
 import os
 try:
-    import asyncio
+  import asyncio
 except ImportError:
-    import trollius as asyncio
+  import trollius as asyncio
 
 from collections import defaultdict
 from functools import partial
@@ -53,7 +53,7 @@ class Context(threading.Thread):
     try:
       port = int(port or os.environ.get('LIBPROCESS_PORT', 0))
     except ValueError:
-      raise self.Error('Invalid ip/port provided')
+      raise cls.Error('Invalid ip/port provided')
     return ip, port
 
   @classmethod
@@ -85,6 +85,8 @@ class Context(threading.Thread):
     self.http = HTTPD(sock, self.loop)
 
     self._connections = {}
+    self._connection_callbacks = defaultdict(list)
+    self._connection_callbacks_lock = threading.Lock()
 
     super(Context, self).__init__()
     self.daemon = True
@@ -128,9 +130,9 @@ class Context(threading.Thread):
 
   def spawn(self, process):
     process.bind(self)
-    process.initialize()
     self.http.mount_process(process)
     self._processes[process.pid] = process
+    process.initialize()
     return process.pid
 
   def _get_dispatch_method(self, pid, method):
@@ -151,6 +153,14 @@ class Context(threading.Thread):
     function = self._get_dispatch_method(pid, method)
     self.loop.add_timeout(self.loop.time() + amount, function, *args)
 
+  def __dispatch_on_connect_callbacks(self, to_pid, stream):
+    with self._connection_callbacks_lock:
+      callbacks = self._connection_callbacks.pop(to_pid, [])
+    for callback in callbacks:
+      log.debug('Dispatching connection callback %s for %s:%s -> %s' % (
+          callback, self.ip, self.port, to_pid))
+      callback(stream)
+
   def maybe_connect(self, to_pid, callback=None):
     """Synchronously open a connection to to_pid or return a connection if it exists."""
 
@@ -163,17 +173,31 @@ class Context(threading.Thread):
 
     def on_connect(exit_cb, stream):
       log.info('Connection to %s established' % to_pid)
-      self._connections[to_pid] = stream
-      callback(stream)
+      with self._connection_callbacks_lock:
+        self._connections[to_pid] = stream
+      self.__dispatch_on_connect_callbacks(to_pid, stream)
       self.loop.add_callback(
           stream.read_until_close,
           exit_cb,
           streaming_callback=streaming_callback)
 
-    stream = self._connections.get(to_pid)
+    create = False
+    with self._connection_callbacks_lock:
+      stream = self._connections.get(to_pid)
+      callbacks = self._connection_callbacks.get(to_pid)
 
-    if stream is not None:
+      if not stream:
+        log.debug('Enqueueing connection callback for %s:%s -> %s' % (self.ip, self.port, to_pid))
+        self._connection_callbacks[to_pid].append(callback)
+
+        if not callbacks:
+          create = True
+
+    if stream:
       callback(stream)
+      return
+
+    if not create:
       return
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
@@ -185,14 +209,17 @@ class Context(threading.Thread):
 
     stream = IOStream(sock, io_loop=self.loop)
     stream.set_nodelay(True)
-    stream.set_close_callback(partial(self.__on_exit, to_pid, b'closed from maybe_connect'))
+    stream.set_close_callback(partial(self.__on_exit, to_pid, b'reached end of stream'))
 
     connect_callback = partial(on_connect, partial(self.__on_exit, to_pid), stream)
 
     log.info('Establishing connection to %s' % to_pid)
+
     stream.connect((to_pid.ip, to_pid.port), callback=connect_callback)
+
     if stream.closed():
       raise self.SocketError('Failed to initiate stream connection')
+
     log.info('Maybe connected to %s' % to_pid)
 
   def _get_local_mailbox(self, pid, method):
@@ -230,10 +257,9 @@ class Context(threading.Thread):
     for pid, links in self._links.items():
       try:
         links.remove(to_pid)
+        log.debug('PID link from %s <- %s exited.' % (pid, to_pid))
         self._processes[pid].exited(to_pid)
-        log.debug('%s:exited(%s)' % (pid, to_pid))
-      except KeyError as e:
-        log.debug('No link from %s:%s' % (pid, to_pid))
+      except KeyError:
         continue
 
   def __on_exit(self, to_pid, body):

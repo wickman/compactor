@@ -1,4 +1,4 @@
-class PID(object):
+class PID(object):  # noqa
   __slots__ = ('ip', 'port', 'id')
 
   @classmethod

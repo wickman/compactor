@@ -89,7 +89,7 @@ class Blackhole(RequestHandler):
     raise HTTPError(404)
 
 
-class HTTPD(object):
+class HTTPD(object):  # noqa
   """
   HTTP Server implementation that attaches to an event loop and socket, and
   is capable of handling mesos wire protocol messages.
@@ -124,18 +124,18 @@ class HTTPD(object):
       route = '/%s%s' % (process.pid.id, route_path)
       log.info('Mounting route %s' % route)
       self.app.add_handlers('.*$', [(
-        re.escape(route),
-        RoutedRequestHandler,
-        dict(process=process, path=route_path)
+          re.escape(route),
+          RoutedRequestHandler,
+          dict(process=process, path=route_path)
       )])
 
     for message_name in process.message_names:
       route = '/%s/%s' % (process.pid.id, message_name)
       log.info('Mounting message handler %s' % route)
       self.app.add_handlers('.*$', [(
-        re.escape(route),
-        WireProtocolMessageHandler,
-        dict(process=process, name=message_name)
+          re.escape(route),
+          WireProtocolMessageHandler,
+          dict(process=process, name=message_name)
       )])
 
   def unmount_process(self, process):
