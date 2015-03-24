@@ -269,7 +269,7 @@ class Context(threading.Thread):
       stream.write(request_data)
       log.info('Wrote %s from %s to %s' % (len(request_data), from_pid, to_pid))
 
-    self.maybe_connect(to_pid, on_connect)
+    self.__loop.add_callback(self.maybe_connect, to_pid, on_connect)
 
   def __erase_link(self, to_pid):
     for pid, links in self._links.items():
@@ -300,7 +300,7 @@ class Context(threading.Thread):
     if self.is_local(pid):
       really_link()
     else:
-      self.maybe_connect(to, on_connect)
+      self.__loop.add_callback(self.maybe_connect, to, on_connect)
 
   def terminate(self, pid):
     self.assert_started()
