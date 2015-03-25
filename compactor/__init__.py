@@ -1,4 +1,4 @@
-import functools
+from functools import wraps
 
 from .context import Context
 from .process import Process
@@ -15,11 +15,12 @@ def initialize(delegate="", **kw):
 
 
 def join():
+  """Join against the global context -- blocking until the context has been stopped."""
   _ROOT_CONTEXT.join()
 
 
 def after_init(fn):
-  @functools.wraps(fn)
+  @wraps(fn)
   def wrapper_fn(*args, **kw):
     initialize()
     return fn(*args, **kw)
@@ -28,22 +29,14 @@ def after_init(fn):
 
 @after_init
 def spawn(process):
-  """Spawn a process and return its pid."""
+  """Spawn a process on the global context and return its pid.
+
+  :param process: The process to bind to the global context.
+  :type process: :class:`Process`
+  :returns pid: The pid of the spawned process.
+  :rtype: :class:`PID`
+  """
   return _ROOT_CONTEXT.spawn(process)
-
-
-@after_init
-def link(process, to):
-  return _ROOT_CONTEXT.link(process, to)
-
-
-@after_init
-def send(to, name, data=None):
-  """Send data to a remote process at `to` with the name `name`."""
-  return _ROOT_CONTEXT.send(to, name, data=data)
-
-
-del after_init
 
 
 route = Process.route
@@ -54,9 +47,12 @@ __all__ = (
   'initialize',
   'install',
   'join',
-  'link',
   'route',
-  'task',
-  'send',
   'spawn',
 )
+
+
+del Context
+del Process
+del after_init
+del wraps

@@ -63,6 +63,9 @@ class GatherProcess(Process):
 
 
 class ScatterThread(threading.Thread):
+  SUFFIX_ID = 1
+  SUFFIX_LOCK = threading.Lock()
+
   def __init__(self, to_pid, iterations, context):
     self.success = False
     self.context = context
@@ -71,7 +74,10 @@ class ScatterThread(threading.Thread):
     super(ScatterThread, self).__init__()
 
   def run(self):
-    scatter = ScatterProcess('scatter' + self.context.unique_suffix())
+    with ScatterThread.SUFFIX_LOCK:
+      suffix = ScatterThread.SUFFIX_ID
+      ScatterThread.SUFFIX_ID += 1
+    scatter = ScatterProcess('scatter(%d)' % suffix)
     self.context.spawn(scatter)
 
     expected_acks = set(('syn%d' % k).encode('utf8') for k in range(self.iterations))

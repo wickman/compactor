@@ -3,6 +3,20 @@ class PID(object):  # noqa
 
   @classmethod
   def from_string(cls, pid):
+    """Parse a PID from its string representation.
+
+    PIDs may be represented as name@ip:port, e.g.
+
+    .. code-block:: python
+
+        pid = PID.from_string('master(1)@192.168.33.2:5051')
+
+    :param pid: A string representation of a pid.
+    :type pid: ``str``
+    :return: The parsed pid.
+    :rtype: :class:`PID`
+    :raises: ``ValueError`` should the string not be of the correct syntax.
+    """
     try:
       id_, ip_port = pid.split('@')
       ip, port = ip_port.split(':')
@@ -12,6 +26,15 @@ class PID(object):  # noqa
     return cls(ip, port, id_)
 
   def __init__(self, ip, port, id_):
+    """Construct a pid.
+
+    :param ip: An IP address in string form.
+    :type ip: ``str``
+    :param port: The port of this pid.
+    :type port: ``int``
+    :param id_: The name of the process.
+    :type id_: ``str``
+    """
     self.ip = ip
     self.port = port
     self.id = id_

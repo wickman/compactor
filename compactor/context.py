@@ -1,3 +1,5 @@
+"""Context controls the routing and handling of messages between processes."""
+
 import logging
 import socket
 import threading
@@ -22,6 +24,13 @@ log = logging.getLogger(__name__)
 
 
 class Context(threading.Thread):
+  """A compactor context.
+
+  Compactor contexts control the routing and handling of messages between
+  processes.  At its most basic level, a context is a listening (ip, port)
+  pair and an event loop.
+  """
+
   class Error(Exception): pass
   class SocketError(Error): pass
   class InvalidProcess(Error): pass
@@ -33,7 +42,7 @@ class Context(threading.Thread):
   CONNECT_TIMEOUT_SECS = 5
 
   @classmethod
-  def make_socket(cls, ip, port):
+  def _make_socket(cls, ip, port):
     """Bind to a new socket.
 
     If LIBPROCESS_PORT or LIBPROCESS_IP are configured in the environment,
@@ -68,6 +77,22 @@ class Context(threading.Thread):
     return cls._SINGLETON
 
   def __init__(self, delegate='', loop=None, ip=None, port=None):
+    """Construct a compactor context.
+
+    Before any useful work can be done with a context, you must call
+    ``start`` on the context.
+
+    :keyword ip: The ip port of the interface on which the Context should listen.
+       If none is specified, the context will attempt to bind to the ip specified by
+       the ``LIBPROCESS_IP`` environment variable.  If this variable is not set,
+       it will bind on all interfaces.
+    :type ip: ``str`` or None
+    :keyword port: The port on which the Context should listen.  If none is specified,
+       the context will attempt to bind to the port specified by the ``LIBPROCESS_PORT``
+       environment variable.  If this variable is not set, it will bind to an ephemeral
+       port.
+    :type port: ``int`` or None
+    """
     self._processes = {}
     self._links = defaultdict(set)
     self.delegate = delegate
@@ -75,7 +100,7 @@ class Context(threading.Thread):
     self.__event_loop = loop
     self._ip = None
     ip, port = self.get_ip_port(ip, port)
-    self.__sock, self.ip, self.port = self.make_socket(ip, port)
+    self.__sock, self.ip, self.port = self._make_socket(ip, port)
     self._connections = {}
     self._connection_callbacks = defaultdict(list)
     self._connection_callbacks_lock = threading.Lock()
@@ -86,10 +111,14 @@ class Context(threading.Thread):
     self.__id = 1
     self.__loop_started = threading.Event()
 
-  def assert_started(self):
+  def _assert_started(self):
     assert self.__loop_started.is_set()
 
   def start(self):
+    """Start the context.  This method must be called before calls to ``send`` and ``spawn``.
+
+    This method is non-blocking.
+    """
     super(Context, self).start()
     self.__loop_started.wait()
 
@@ -97,8 +126,7 @@ class Context(threading.Thread):
     log.debug('%s: %s' % (self.__context_name, msg))
 
   def run(self):
-    # Start the loop for this context, this is a blocking call and will
-    # keep the thread alive.
+    # The entry point of the Context thread.  This should not be called directly.
     loop = self.__event_loop or asyncio.new_event_loop()
 
     class CustomIOLoop(BaseAsyncIOLoop):
@@ -113,19 +141,16 @@ class Context(threading.Thread):
     self.__loop.start()
     self.__loop.close()
 
-  def is_local(self, pid):
+  def _is_local(self, pid):
     return pid in self._processes
 
-  def assert_local_pid(self, pid):
-    if not self.is_local(pid):
+  def _assert_local_pid(self, pid):
+    if not self._is_local(pid):
       raise self.InvalidProcess('Operation only valid for local processes!')
 
-  def unique_suffix(self):
-    with self.lock:
-      suffix, self.__id = '(%d)' % self.__id, self.__id + 1
-      return suffix
-
   def stop(self):
+    """Stops the context.  This terminates all PIDs and closes all connections."""
+
     log.info('Stopping %s' % self)
 
     pids = list(self._processes)
@@ -143,7 +168,19 @@ class Context(threading.Thread):
     self.__loop.stop()
 
   def spawn(self, process):
-    self.assert_started()
+    """Spawn a process.
+
+    Spawning a process binds it to this context and assigns the process a
+    pid which is returned.  The process' ``initialize`` method is called.
+
+    Note: A process cannot send messages until it is bound to a context.
+
+    :param process: The process to bind to this context.
+    :type process: :class:`Process`
+    :return: The pid of the process.
+    :rtype: :class:`PID`
+    """
+    self._assert_started()
     process.bind(self)
     self.http.mount_process(process)
     self._processes[process.pid] = process
@@ -159,14 +196,43 @@ class Context(threading.Thread):
       raise self.InvalidMethod('Unknown method %s on %s' % (method, pid))
 
   def dispatch(self, pid, method, *args):
-    self.assert_started()
-    self.assert_local_pid(pid)
+    """Call a method on another process by its pid.
+
+    The method on the other process does not need to be installed with
+    ``Process.install``.  The call is serialized with all other calls on the
+    context's event loop.  The pid must be bound to this context.
+
+    This function returns immediately.
+
+    :param pid: The pid of the process to be called.
+    :type pid: :class:`PID`
+    :param method: The name of the method to be called.
+    :type method: ``str``
+    :return: Nothing
+    """
+    self._assert_started()
+    self._assert_local_pid(pid)
     function = self._get_dispatch_method(pid, method)
     self.__loop.add_callback(function, *args)
 
   def delay(self, amount, pid, method, *args):
-    self.assert_started()
-    self.assert_local_pid(pid)
+    """Call a method on another process after a specified delay.
+
+    This is equivalent to ``dispatch`` except with an additional amount of
+    time to wait prior to invoking the call.
+
+    This function returns immediately.
+
+    :param amount: The amount of time to wait in seconds before making the call.
+    :type amount: ``float`` or ``int``
+    :param pid: The pid of the process to be called.
+    :type pid: :class:`PID`
+    :param method: The name of the method to be called.
+    :type method: ``str``
+    :return: Nothing
+    """
+    self._assert_started()
+    self._assert_local_pid(pid)
     function = self._get_dispatch_method(pid, method)
     self.__loop.add_timeout(self.__loop.time() + amount, function, *args)
 
@@ -178,8 +244,8 @@ class Context(threading.Thread):
           callback, self.ip, self.port, to_pid))
       self.__loop.add_callback(callback, stream)
 
-  def maybe_connect(self, to_pid, callback=None):
-    """Synchronously open a connection to to_pid or return a connection if it exists."""
+  def _maybe_connect(self, to_pid, callback=None):
+    """Asynchronously establish a connection to the remote pid."""
 
     callback = stack_context.wrap(callback or (lambda stream: None))
 
@@ -241,11 +307,32 @@ class Context(threading.Thread):
         return callable
 
   def send(self, from_pid, to_pid, method, body=None):
-    """Send a message method from_pid to_pid with body (optional)"""
+    """Send a message method from one pid to another with an optional body.
 
-    self.assert_started()
+    Note: It is more idiomatic to send directly from a bound process rather than
+    calling send on the context.
 
-    if self.is_local(to_pid):
+    If the destination pid is on the same context, the Context may skip the
+    wire and route directly to process itself.  ``from_pid`` must be bound
+    to this context.
+
+    This method returns immediately.
+
+    :param from_pid: The pid of the sending process.
+    :type from_pid: :class:`PID`
+    :param to_pid: The pid of the destination process.
+    :type to_pid: :class:`PID`
+    :param method: The method name of the destination process.
+    :type method: ``str``
+    :keyword body: Optional content to send along with the message.
+    :type body: ``bytes`` or None
+    :return: Nothing
+    """
+
+    self._assert_started()
+    self._assert_local_pid(from_pid)
+
+    if self._is_local(to_pid):
       local_method = self._get_local_mailbox(to_pid, method)
       if local_method:
         log.info('Doing local dispatch of %s => %s (method: %s)' % (from_pid, to_pid, local_method))
@@ -266,7 +353,7 @@ class Context(threading.Thread):
       stream.write(request_data)
       log.info('Wrote %s from %s to %s' % (len(request_data), from_pid, to_pid))
 
-    self.__loop.add_callback(self.maybe_connect, to_pid, on_connect)
+    self.__loop.add_callback(self._maybe_connect, to_pid, on_connect)
 
   def __erase_link(self, to_pid):
     for pid, links in self._links.items():
@@ -285,7 +372,25 @@ class Context(threading.Thread):
     self.__erase_link(to_pid)
 
   def link(self, pid, to):
-    self.assert_started()
+    """Link a local process to a possibly remote process.
+
+    Note: It is more idiomatic to call ``link`` directly on the bound Process
+    object instead.
+
+    When ``pid`` is linked to ``to``, the termination of the ``to`` process
+    (or the severing of its connection from the Process ``pid``) will result
+    in the local process' ``exited`` method to be called with ``to``.
+
+    This method returns immediately.
+
+    :param pid: The pid of the linking process.
+    :type pid: :class:`PID`
+    :param to: The pid of the linked process.
+    :type to: :class:`PID`
+    :returns: Nothing
+    """
+
+    self._assert_started()
 
     def really_link():
       self._links[pid].add(to)
@@ -294,13 +399,25 @@ class Context(threading.Thread):
     def on_connect(stream):
       really_link()
 
-    if self.is_local(pid):
+    if self._is_local(pid):
       really_link()
     else:
-      self.__loop.add_callback(self.maybe_connect, to, on_connect)
+      self.__loop.add_callback(self._maybe_connect, to, on_connect)
 
   def terminate(self, pid):
-    self.assert_started()
+    """Terminate a process bound to this context.
+
+    When a process is terminated, all the processes to which it is linked
+    will be have their ``exited`` methods called.  Messages to this process
+    will no longer be delivered.
+
+    This method returns immediately.
+
+    :param pid: The pid of the process to terminate.
+    :type pid: :class:`PID`
+    :returns: Nothing
+    """
+    self._assert_started()
 
     log.info('Terminating %s' % pid)
     process = self._processes.pop(pid, None)
