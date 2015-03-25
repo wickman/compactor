@@ -10,6 +10,6 @@ underpinning `mesos <https://mesos.apache.org>`_.
 documentation
 =============
 
-compactor documentation is available at `readthedocs <https://compactor.rtfd.org>`_.
+compactor documentation is available at `readthedocs <https://compactor.readthedocs.org>`_.
 an example framework built using compactor is `pesos <https://github.com/wickman/pesos>`_,
 a pure python implementation of the mesos framework api.
