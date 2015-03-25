@@ -52,7 +52,4 @@ __all__ = (
 )
 
 
-del Context
-del Process
 del after_init
-del wraps
