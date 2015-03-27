@@ -91,7 +91,11 @@ class Process(object):
     for method in type(self).__dict__.values():
       if callable(method):
         # 'method' is the unbound method on the class -- we want to return the bound instancemethod
-        yield getattr(self, method.__name__)
+        try:
+          yield getattr(self, method.__name__)
+        except AttributeError:
+          # This is possible for __name_mangled_attributes.
+          continue
 
   def iter_routes(self):
     for function in self.__iter_callables():

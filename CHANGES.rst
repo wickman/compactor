@@ -3,6 +3,15 @@ CHANGES
 =======
 
 -----
+0.3.0
+-----
+
+* Add API documentation and register a `readthedocs <https://compactor.readthedocs.org>`_ site.
+
+* Fix bug that would cause compactor to crash if you subclassed ``Process`` and implemented any
+  name-mangled methods.
+
+-----
 0.2.2
 -----
 
